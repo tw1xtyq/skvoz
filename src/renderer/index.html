@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'">
+  <title>Zapret App</title>
+  <link rel="icon" type="image/png" href="assets/logo.png">
+  <script src="theme-init.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="grid-bg"></div>
+  </div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <img class="brand-logo" src="assets/logo.png" alt="Zapret App" width="44" height="44">
+        </div>
+        <div class="brand-copy">
+          <h1>Zapret App</h1>
+          <p>Запуск и управление обходом в один клик</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Сменить тему" aria-pressed="false">
+          <span class="theme-track">
+            <span class="theme-icon theme-sun" aria-hidden="true">☀</span>
+            <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
+            <span class="theme-knob"></span>
+          </span>
+        </button>
+        <div class="status-chip" id="statusBadge">
+          <span class="status-dot"></span>
+          <span id="statusText">Загрузка...</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="notice notice-danger hidden" id="officialWarning"></div>
+    <div class="notice notice-warn hidden" id="adminBanner">
+      <strong>Нет прав администратора</strong>
+      <span>Для запуска обхода нужны права администратора</span>
+      <button class="btn btn-xs btn-glow" id="btnRestartAdmin" type="button">Перезапуск от админа</button>
+    </div>
+    <div class="notice notice-info hidden" id="bootstrapBanner"></div>
+    <div class="notice notice-accent hidden" id="appUpdateBanner">
+      <div class="notice-copy">
+        <strong>Доступно обновление Zapret App</strong>
+        <span id="appUpdateBannerText">—</span>
+      </div>
+      <button class="btn btn-xs btn-glow" id="btnInstallAppUpdate" type="button">Обновить</button>
+      <button class="btn btn-xs btn-soft" id="btnOpenAppRelease" type="button">GitHub</button>
+      <button class="btn btn-xs btn-ghost" id="btnDismissAppUpdate" type="button">Позже</button>
+    </div>
+
+    <div class="load-card hidden" id="progressWrap" aria-live="polite">
+      <div class="load-card-inner">
+        <div class="load-spinner" aria-hidden="true"><span></span></div>
+        <div class="load-copy">
+          <div class="load-head">
+            <strong class="load-title" id="progressTitle">Загрузка</strong>
+            <span class="load-pct" id="progressPct">0%</span>
+          </div>
+          <div class="load-stages" id="progressStages"></div>
+          <div class="progress-track load-track"><div class="progress-bar" id="progressFill"></div></div>
+          <p class="load-label" id="progressText"></p>
+        </div>
+      </div>
+    </div>
+
+    <section class="glass-card hero-empty hidden" id="emptyState">
+      <div class="hero-empty-inner">
+        <div class="hero-logo-wrap" id="heroLogoWrap">
+          <div class="hero-loader hidden" id="heroLoader" aria-hidden="true"></div>
+          <img class="hero-logo" src="assets/logo.png" alt="Zapret App">
+        </div>
+        <h2 id="emptyStateTitle">Zapret не найден</h2>
+        <p id="emptyStateHint">Скачайте zapret или укажите папку на компьютере — дальше всё из одного окна.</p>
+        <div class="hero-actions" id="emptyStateActions">
+          <button class="btn btn-glow" id="btnDownload" type="button">Скачать с GitHub</button>
+          <button class="btn btn-soft" id="btnRescanEmpty" type="button">Найти на ПК</button>
+          <button class="btn btn-ghost" id="btnChangePathEmpty" type="button">Указать папку</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="glass-card command-deck" id="mainPanel">
+      <div class="command-layout">
+        <div class="command-main">
+          <div class="meta-row">
+            <span class="pill" id="officialBadge">—</span>
+            <span class="pill pill-muted" id="versionLine">—</span>
+          </div>
+          <div class="path-card">
+            <span class="eyebrow">Папка zapret</span>
+            <code class="path-value" id="zapretPath">—</code>
+          </div>
+          <div class="chip-row runtime-lock-group" id="pathActionsGroup">
+            <button class="chip-btn" id="btnRescan" type="button">Пересканировать</button>
+            <button class="chip-btn" id="btnChangePath" type="button">Сменить путь</button>
+            <button class="chip-btn" id="btnDownloadInline" type="button">Обновить</button>
+          </div>
+          <p class="runtime-lock-hint hidden" id="pathLockHint">Остановите обход, чтобы менять папку или обновлять zapret</p>
+        </div>
+
+        <div class="power-zone" id="powerZone">
+          <div class="power-stack">
+            <div class="power-ring"></div>
+            <div class="power-ring power-ring-2"></div>
+            <button class="power-btn" id="btnToggle" type="button" aria-label="Старт или стоп">
+              <span class="power-spinner hidden" id="powerSpinner" aria-hidden="true"></span>
+              <span class="power-icon" id="btnToggleIcon" aria-hidden="true">▶</span>
+              <span class="power-label" id="btnToggleText">Старт</span>
+            </button>
+          </div>
+          <span class="power-hint">Старт / стоп</span>
+        </div>
+      </div>
+    </section>
+
+    <div id="functionalPanel">
+      <div class="bento">
+        <section class="glass-card bento-card bento-wide">
+          <header class="card-head card-head-stack">
+            <div class="card-head-row">
+              <span class="card-icon">⚙</span>
+              <h3>Настройки</h3>
+            </div>
+            <p class="card-hint">Автозапуск, игры, списки IP и проверка обновлений zapret</p>
+          </header>
+
+          <div class="runtime-lock-group" id="runtimeSettingsGroup">
+          <div class="setting-block">
+            <label class="field-label" for="gameFilterSelect">Игровой фильтр</label>
+            <select id="gameFilterSelect">
+              <option value="disabled">Выключен</option>
+              <option value="all">TCP + UDP</option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </div>
+
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="ipsetToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">IPSet</span>
+                <span class="switch-desc">Список IP для фильтрации провайдера</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="checkUpdatesToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автообновления</span>
+                <span class="switch-desc">Проверка новой версии на GitHub</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="setting-block user-lists-block" id="userListsGroup">
+            <label class="field-label" for="userListKind">Свои домены и IP</label>
+            <select id="userListKind">
+              <option value="general">Для обхода (домены и IP)</option>
+              <option value="exclude-domains">Исключить домены</option>
+              <option value="exclude-ips">Исключить IP / подсети</option>
+            </select>
+            <p class="hint user-list-hint" id="userListHint">—</p>
+            <textarea id="userListEditor" class="user-list-editor" rows="5" spellcheck="false" placeholder="example.com"></textarea>
+            <div class="user-list-quick">
+              <input id="userListQuickAdd" class="user-list-input" type="text" placeholder="example.com или 192.168.0.0/24" autocomplete="off">
+              <button class="btn btn-soft btn-sm" id="btnUserListAdd" type="button">Добавить</button>
+              <button class="btn btn-glow btn-sm" id="btnUserListSave" type="button">Сохранить</button>
+            </div>
+          </div>
+          </div>
+          <p class="runtime-lock-hint hidden" id="settingsLockHint">Остановите обход, чтобы менять фильтры и списки</p>
+
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="launchAtStartupToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск приложения</span>
+                <span class="switch-desc">Открывать Zapret App при старте Windows</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoStartBypassToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск обхода</span>
+                <span class="switch-desc">Запускать zapret при открытии приложения (включит автозапуск приложения)</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoPickStrategyToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автоподбор конфига</span>
+                <span class="switch-desc">При первом запуске — проверка всех .bat с прогрессом и возможностью отмены</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="glass-card bento-card bento-wide config-card">
+          <header class="card-head card-head-split">
+            <div class="card-head-main">
+              <span class="card-icon">◎</span>
+              <div>
+                <h3>Конфиг обхода</h3>
+                <p class="config-meta" id="configMeta">—</p>
+              </div>
+            </div>
+          </header>
+
+          <div class="config-current runtime-lock-group" id="configStrategyGroup">
+            <label class="field-label" for="strategySelect">Текущий конфиг</label>
+            <select id="strategySelect"></select>
+          </div>
+
+          <div class="config-divider" aria-hidden="true"></div>
+
+          <div class="config-picker runtime-lock-group" id="configTestsGroup">
+            <p class="hint config-picker-hint">Запускает проверку всех конфигов с блокировкой интерфейса. Можно отменить в любой момент</p>
+            <div class="test-actions">
+              <button class="btn btn-glow" id="btnFindBest" type="button">Проверить все конфиги</button>
+              <button class="btn btn-soft" id="btnTests" type="button">Только текущий</button>
+            </div>
+            <div class="test-progress load-inline hidden" id="testProgressWrap">
+              <div class="test-progress-head">
+                <span class="load-inline-label" id="testProgressText">—</span>
+                <span class="test-progress-pct" id="testProgressPct">0%</span>
+              </div>
+              <div class="progress-track load-track"><div class="progress-bar" id="testProgressBar"></div></div>
+            </div>
+            <div class="test-results hidden" id="testResults"></div>
+          </div>
+          <p class="runtime-lock-hint hidden" id="configLockHint">Остановите обход, чтобы менять конфиг или запускать проверку</p>
+        </section>
+
+        <section class="glass-card bento-card bento-wide">
+          <header class="card-head card-head-stack">
+            <div class="card-head-row">
+              <span class="card-icon">✦</span>
+              <h3>Инструменты</h3>
+            </div>
+            <p class="card-hint">Диагностика, проверка версии и полное удаление zapret</p>
+          </header>
+          <div class="tool-grid">
+            <div class="tool-cell">
+              <button class="btn btn-soft btn-sm" id="btnDiagnostics" type="button">Диагностика</button>
+              <p class="tool-hint">Интернет, DNS, curl и конфликты</p>
+            </div>
+            <div class="tool-cell">
+              <button class="btn btn-soft btn-sm" id="btnProcessStatus" type="button">Статус</button>
+              <p class="tool-hint">Запущен ли winws.exe</p>
+            </div>
+            <div class="tool-cell">
+              <button class="btn btn-soft btn-sm" id="btnCheckUpdates" type="button">Версия</button>
+              <p class="tool-hint">Сравнение с GitHub</p>
+            </div>
+            <div class="tool-cell tool-cell-danger runtime-lock-group" id="fullRemoveGroup">
+              <button class="btn btn-danger btn-sm" id="btnFullRemove" type="button">Удалить с ПК</button>
+              <p class="tool-hint">Стоп, очистка и удаление папок zapret</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section class="glass-card terminal-panel" id="logPanel">
+        <div class="terminal-head">
+          <div class="terminal-dots"><span></span><span></span><span></span></div>
+          <div class="journal-head-copy">
+            <h3 id="journalTitle">Журнал</h3>
+            <p class="journal-status" id="journalStatus"></p>
+          </div>
+          <div class="journal-actions">
+            <button class="chip-btn" id="btnCopyLog" type="button">Копировать</button>
+            <button class="chip-btn" id="btnClearLog" type="button">Очистить</button>
+          </div>
+        </div>
+        <div class="terminal-body expanded" id="log"></div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <p class="footer-note">Zapret App — простой пульт для zapret: скачивание, конфиг, старт и стоп без лишних шагов.</p>
+      <p class="footer-version" id="appVersionLine">Zapret App v—</p>
+      <div class="footer-links">
+        <a href="#" id="linkAppRepo">ProtheticGlitch/zapret-app</a>
+        <span class="footer-dot"></span>
+        <a href="#" id="linkOfficial">Официальный zapret</a>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <div class="overlay hidden" id="strategyPickOverlay" aria-hidden="true">
+    <div class="modal-shell strategy-pick-shell" role="dialog" aria-modal="true" aria-labelledby="strategyPickTitle">
+      <div class="strategy-pick-head">
+        <span class="dialog-icon dialog-icon-info" aria-hidden="true">◎</span>
+        <div>
+          <h2 id="strategyPickTitle">Подбор лучшего конфига</h2>
+          <p class="strategy-pick-hint" id="strategyPickHint">Проверяем все .bat. Окно заблокировано до завершения или отмены.</p>
+        </div>
+      </div>
+      <div class="strategy-pick-body">
+        <div class="strategy-pick-visual" aria-hidden="true">
+          <div class="load-spinner load-spinner-lg strategy-pick-spinner" id="strategyPickSpinner"><span></span></div>
+        </div>
+        <div class="test-progress load-inline strategy-pick-progress is-open" id="strategyPickProgressWrap">
+          <div class="test-progress-head">
+            <span class="load-inline-label" id="strategyPickProgressText">Подготовка...</span>
+            <span class="test-progress-pct" id="strategyPickProgressPct">0%</span>
+          </div>
+          <div class="progress-track load-track strategy-pick-track">
+            <div class="progress-bar" id="strategyPickProgressBar"></div>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-actions strategy-pick-actions">
+        <button class="btn btn-soft" id="btnCancelStrategyPick" type="button">Отменить поиск</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="modalOverlay">
+    <div class="modal-shell dialog-shell dialog-confirm" role="dialog" aria-modal="true">
+      <div class="dialog-brand">
+        <span class="dialog-icon dialog-icon-confirm" aria-hidden="true">?</span>
+        <h2 id="modalTitle">Подтверждение</h2>
+      </div>
+      <p id="modalBody"></p>
+      <p class="dialog-hint hidden" id="modalHint"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="modalCancel" type="button">Отмена</button>
+        <button class="btn btn-glow" id="modalOk" type="button">Продолжить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="infoOverlay">
+    <div class="modal-shell dialog-shell dialog-info" role="dialog" aria-modal="true">
+      <div class="dialog-brand">
+        <span class="dialog-icon dialog-icon-info" aria-hidden="true">i</span>
+        <h2 id="infoTitle">Информация</h2>
+      </div>
+      <p id="infoBody"></p>
+      <p class="dialog-hint hidden" id="infoHint"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-glow" id="infoClose" type="button">Понятно</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="errorOverlay">
+    <div class="modal-shell dialog-shell dialog-error" role="dialog" aria-modal="true">
+      <div class="dialog-brand">
+        <span class="dialog-icon dialog-icon-error" aria-hidden="true">!</span>
+        <h2 id="errorTitle">Ошибка</h2>
+      </div>
+      <p id="errorBody"></p>
+      <p class="dialog-hint hidden" id="errorHint"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-glow" id="errorClose" type="button">Понятно</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

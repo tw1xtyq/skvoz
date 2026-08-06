@@ -1,0 +1,251 @@
+export type ToastType = 'info' | 'success' | 'error';
+
+export interface UserErrorView {
+  title: string;
+  message: string;
+  hint?: string;
+}
+
+const IPC_ERROR_RE = /^Error invoking remote method '[^']+': (?:Error: )?/;
+
+export function formatUserError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw.replace(IPC_ERROR_RE, '').replace(/^Error: /, '').trim();
+}
+
+export function humanizeError(err: unknown, fallbackTitle = 'Что-то пошло не так'): UserErrorView {
+  const raw = formatUserError(err);
+  const lower = raw.toLowerCase();
+
+  if (/eperm|eacces|operation not permitted|отказано в доступе|занят другим процессом/i.test(raw)) {
+    const fileMatch = raw.match(/unlink\s+'([^']+)'|remove\s+'([^']+)'|:\s*(.+\\[^\\]+)$/i);
+    const fileName = fileMatch ? pathBasename(fileMatch[1] ?? fileMatch[2] ?? fileMatch[3] ?? '') : '';
+    return {
+      title: 'Файл занят',
+      message: fileName
+        ? `Не удалось изменить «${fileName}» — файл используется другим процессом.`
+        : 'Windows не даёт изменить файлы zapret, пока они заняты.',
+      hint: 'Нажмите «Стоп» в приложении, закройте другие окна zapret и повторите. Если ошибка останется — перезагрузите компьютер.',
+    };
+  }
+
+  if (/enotempty|ebusy|directory not empty/i.test(raw)) {
+    return {
+      title: 'Папка занята',
+      message: 'Не удалось очистить или удалить папку zapret.',
+      hint: 'Остановите обход и повторите операцию через минуту.',
+    };
+  }
+
+  if (/enoent|not found|не найден/i.test(raw)) {
+    return {
+      title: 'Не найдено',
+      message: raw.length > 180 ? 'Нужный файл или папка не найдены.' : raw,
+      hint: 'Проверьте путь к zapret или скачайте сборку заново.',
+    };
+  }
+
+  if (/timeout|таймаут/i.test(raw)) {
+    return {
+      title: 'Превышено время ожидания',
+      message: 'Операция заняла слишком много времени.',
+      hint: 'Проверьте интернет и повторите попытку.',
+    };
+  }
+
+  if (/admin|администратор|uac|eacces.*winws/i.test(lower)) {
+    return {
+      title: 'Нужны права администратора',
+      message: raw.length > 160 ? 'Для этой операции нужны права администратора.' : raw,
+      hint: 'Запустите Zapret App от имени администратора и подтвердите UAC.',
+    };
+  }
+
+  if (/network|fetch|github|http/i.test(lower)) {
+    return {
+      title: 'Ошибка сети',
+      message: raw.length > 180 ? 'Не удалось связаться с сервером или скачать файлы.' : raw,
+      hint: 'Проверьте интернет, VPN и доступ к GitHub.',
+    };
+  }
+
+  return {
+    title: fallbackTitle,
+    message: raw || 'Произошла неизвестная ошибка.',
+    hint: 'Подробности записаны в журнал внизу окна.',
+  };
+}
+
+function pathBasename(value: string): string {
+  const parts = value.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || value;
+}
+
+const OVERLAY_CLOSE_MS = 320;
+
+function openOverlay(overlay: HTMLElement): void {
+  overlay.classList.remove('hidden', 'is-closing');
+  requestAnimationFrame(() => overlay.classList.add('is-open'));
+}
+
+function closeOverlay(overlay: HTMLElement, onClosed: () => void): void {
+  overlay.classList.remove('is-open');
+  overlay.classList.add('is-closing');
+  window.setTimeout(() => {
+    overlay.classList.add('hidden');
+    overlay.classList.remove('is-closing');
+    onClosed();
+  }, OVERLAY_CLOSE_MS);
+}
+
+export function toast(message: string, type: ToastType = 'info'): void {
+  const root = document.getElementById('toasts');
+  if (!root) return;
+
+  const text = message.trim();
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = text;
+  if (text.length > 96) {
+    el.title = text;
+  }
+  root.appendChild(el);
+
+  const duration = Math.min(5200, Math.max(3200, 2200 + text.length * 18));
+
+  requestAnimationFrame(() => el.classList.add('show'));
+  window.setTimeout(() => {
+    el.classList.remove('show');
+    el.classList.add('hide');
+    window.setTimeout(() => el.remove(), 320);
+  }, duration);
+}
+
+export function showErrorModal(err: unknown, fallbackTitle?: string): void {
+  const view = humanizeError(err, fallbackTitle);
+  showErrorDialog(view);
+}
+
+export function showErrorDialog(view: UserErrorView): void {
+  const overlay = document.getElementById('errorOverlay');
+  const titleEl = document.getElementById('errorTitle');
+  const bodyEl = document.getElementById('errorBody');
+  const hintEl = document.getElementById('errorHint');
+  const closeBtn = document.getElementById('errorClose') as HTMLButtonElement | null;
+  if (!overlay || !titleEl || !bodyEl || !hintEl || !closeBtn) return;
+
+  titleEl.textContent = view.title;
+  bodyEl.textContent = view.message;
+  hintEl.textContent = view.hint ?? '';
+  hintEl.classList.toggle('hidden', !view.hint);
+  openOverlay(overlay);
+
+  const onClose = () => {
+    closeOverlay(overlay, () => {
+      closeBtn.removeEventListener('click', onClose);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKeydown);
+    });
+  };
+
+  const onBackdrop = (event: MouseEvent) => {
+    if (event.target === overlay) onClose();
+  };
+
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') onClose();
+  };
+
+  closeBtn.addEventListener('click', onClose);
+  overlay.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKeydown);
+}
+
+export function confirmModal(title: string, message: string, hint?: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('modalOverlay');
+    const titleEl = document.getElementById('modalTitle');
+    const bodyEl = document.getElementById('modalBody');
+    const hintEl = document.getElementById('modalHint');
+    const okBtn = document.getElementById('modalOk') as HTMLButtonElement | null;
+    const cancelBtn = document.getElementById('modalCancel') as HTMLButtonElement | null;
+    if (!overlay || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
+      resolve(true);
+      return;
+    }
+
+    titleEl.textContent = title;
+    bodyEl.textContent = message;
+    if (hintEl) {
+      hintEl.textContent = hint ?? '';
+      hintEl.classList.toggle('hidden', !hint);
+    }
+    overlay.classList.remove('hidden');
+    openOverlay(overlay);
+
+    const cleanup = (result: boolean) => {
+      closeOverlay(overlay, () => {
+        okBtn.removeEventListener('click', onOk);
+        cancelBtn.removeEventListener('click', onCancel);
+        overlay.removeEventListener('click', onBackdrop);
+        document.removeEventListener('keydown', onKeydown);
+        resolve(result);
+      });
+    };
+
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (event: MouseEvent) => {
+      if (event.target === overlay) cleanup(false);
+    };
+    const onKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cleanup(false);
+    };
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKeydown);
+  });
+}
+
+export function showInfoModal(title: string, message: string, hint?: string): void {
+  const overlay = document.getElementById('infoOverlay');
+  const titleEl = document.getElementById('infoTitle');
+  const bodyEl = document.getElementById('infoBody');
+  const hintEl = document.getElementById('infoHint');
+  const closeBtn = document.getElementById('infoClose') as HTMLButtonElement | null;
+  if (!overlay || !titleEl || !bodyEl || !closeBtn) return;
+
+  titleEl.textContent = title;
+  bodyEl.textContent = message;
+  if (hintEl) {
+    hintEl.textContent = hint ?? '';
+    hintEl.classList.toggle('hidden', !hint);
+  }
+  openOverlay(overlay);
+
+  const onClose = () => {
+    closeOverlay(overlay, () => {
+      closeBtn.removeEventListener('click', onClose);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKeydown);
+    });
+  };
+
+  const onBackdrop = (event: MouseEvent) => {
+    if (event.target === overlay) onClose();
+  };
+
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') onClose();
+  };
+
+  closeBtn.addEventListener('click', onClose);
+  overlay.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKeydown);
+}
+
+export function initUi(): void {
+  /* journal controls wired in app.ts */
+}

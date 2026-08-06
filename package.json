@@ -1,0 +1,80 @@
+{
+  "name": "zapret-app",
+  "version": "1.0.8",
+  "description": "Простой пульт для запуска и управления zapret",
+  "main": "dist/main/main.js",
+  "author": "ProtheticGlitch",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ProtheticGlitch/zapret-app"
+  },
+  "scripts": {
+    "clean": "node scripts/clean.js",
+    "build": "tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
+    "icons": "node scripts/generate-icon.js",
+    "start": "scripts\\start-win.cmd",
+    "dev": "tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/run-dev.js",
+    "dev:admin": "scripts\\start-win.cmd",
+    "pack": "npm run build && npm run icons && electron-builder --win --x64",
+    "pack:portable": "npm run build && npm run icons && electron-builder --win portable --x64",
+    "pack:setup": "npm run build && npm run icons && electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "com.protheticglitch.zapret-app",
+    "productName": "Zapret App",
+    "copyright": "Copyright © 2026 ProtheticGlitch",
+    "afterPack": "scripts/patch-win-exe.js",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icon.ico",
+      "requestedExecutionLevel": "requireAdministrator",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Zapret App",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "artifactName": "Zapret-App-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Zapret-App-${version}-Portable.${ext}"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^2.1.8",
+    "rcedit": "^4.0.1",
+    "typescript": "^5.7.2"
+  }
+}
