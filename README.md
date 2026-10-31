@@ -6,7 +6,7 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 
 ## Скачать
 
-[**Releases → последняя версия**](https://github.com/ProtheticGlitch/zapret-app/releases/latest)
+[**Releases → последняя версия**](https://github.com/tw1xtyq/skvoz/releases/latest)
 
 | Файл | Описание |
 |------|----------|
@@ -67,7 +67,7 @@ Portable и установленная версия хранят настрой�
 ## Сборка из исходников
 
 ```powershell
-git clone https://github.com/ProtheticGlitch/zapret-app.git
+git clone https://github.com/tw1xtyq/skvoz.git
 cd zapret-app
 npm ci
 npm run build

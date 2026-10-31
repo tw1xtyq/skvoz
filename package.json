@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ProtheticGlitch/zapret-app"
+    "url": "https://github.com/tw1xtyq/skvoz"
   },
   "scripts": {
     "clean": "node scripts/clean.js",

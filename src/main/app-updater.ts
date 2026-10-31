@@ -7,7 +7,7 @@ import { STARTUP_LAUNCH_ARG } from './autostart';
 import { compareVersions, normalizeVersion } from './version-utils';
 import type { DownloadProgress } from './downloader';
 
-export const APP_GITHUB_REPO = 'ProtheticGlitch/zapret-app';
+export const APP_GITHUB_REPO = 'tw1xtyq/skvoz';
 
 export type AppUpdateKind = 'source' | 'portable' | 'setup';
 
