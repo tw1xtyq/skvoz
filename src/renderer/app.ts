@@ -411,7 +411,7 @@ const POLL_VISIBLE_MS = 30_000;
 let statusRefreshInFlight = false;
 let statusRefreshQueued = false;
 let pendingAppUpdateInfo: AppUpdateInfo | null = null;
-let appUpdateDownloadReady = false;
+let appUpdateInProgress = false;
 
 let tgwsConfig: TgwsProxyConfig | null = null;
 let tgwsRunning = false;
@@ -1069,15 +1069,16 @@ async function refreshAppVersionLine(): Promise<void> {
 }
 
 async function installAppUpdate(): Promise<void> {
-  if (busy || !pendingAppUpdateInfo?.latest) return;
+  if (busy || appUpdateInProgress || !pendingAppUpdateInfo?.latest) return;
 
   const latest = pendingAppUpdateInfo.latest;
   setBusy(true);
-  appUpdateDownloadReady = false;
+  appUpdateInProgress = true;
+  els.btnInstallAppUpdate.textContent = 'Скачиваем…';
   setGlobalLoad({
     visible: true,
     title: 'Обновление Skvoz',
-    message: `Скачиваем версию ${latest}...`,
+    message: `Скачиваем версию ${latest}…`,
     indeterminate: true,
     stage: 'download',
   });
@@ -1085,40 +1086,22 @@ async function installAppUpdate(): Promise<void> {
   try {
     log(`Загрузка Skvoz ${latest}...`, 'info');
     await api.downloadAppUpdate();
-    appUpdateDownloadReady = true;
+    els.btnInstallAppUpdate.textContent = 'Устанавливаем…';
     setGlobalLoad({
       visible: true,
-      title: 'Обновление готово',
-      message: 'Подтвердите установку в диалоге',
+      title: 'Устанавливаем Skvoz ' + latest,
+      message: 'Приложение закроется и через несколько секунд откроется уже обновлённым',
       percent: 100,
       stage: 'done',
     });
-
-    const ok = await confirmModal(
-      'Установить обновление',
-      `Skvoz ${latest} скачан.\n\nПриложение перезапустится и установит обновление. Продолжить?`
-    );
-    if (!ok) {
-      toast('Обновление скачано. Нажмите «Обновить» ещё раз для установки.', 'info');
-      return;
-    }
-
+    log(`Skvoz ${latest} скачан, устанавливаем...`, 'success');
     await api.applyAppUpdate();
   } catch (err) {
-    setGlobalLoad({
-      visible: true,
-      title: 'Ошибка обновления',
-      message: formatUserError(err),
-      stage: 'error',
-    });
-    reportFailure(err, 'Не удалось обновить');
-  } finally {
+    appUpdateInProgress = false;
+    els.btnInstallAppUpdate.textContent = 'Повторить';
+    setGlobalLoad({ visible: false });
+    reportFailure(err, 'Не удалось обновить Skvoz');
     setBusy(false);
-    if (!appUpdateDownloadReady) {
-      setGlobalLoad({ visible: false });
-    } else {
-      window.setTimeout(() => setGlobalLoad({ visible: false }), 1200);
-    }
   }
 }
 
@@ -1153,6 +1136,19 @@ function setDownloadingUi(active: boolean, message?: string): void {
 
 function showDownloadProgress(progress: DownloadProgress): void {
   const stage = mapDownloadStage(progress.stage);
+  if (appUpdateInProgress) {
+    // Это загрузка самого Skvoz — zapret и статус не трогаем
+    if (progress.stage === 'done' || progress.stage === 'error') return;
+    setGlobalLoad({
+      visible: true,
+      title: 'Обновление Skvoz',
+      message: progress.message,
+      percent: progress.percent,
+      stage: 'download',
+      indeterminate: progress.percent < 1,
+    });
+    return;
+  }
   if (!currentStatus?.pathsValid) {
     setDownloadingUi(true, progress.message);
   }
@@ -1837,26 +1833,7 @@ els.linkAppRepo.addEventListener('click', (e) => {
   void api.openAppReleasePage();
 });
 
-els.btnInstallAppUpdate.addEventListener('click', () => {
-  if (appUpdateDownloadReady) {
-    void (async () => {
-      const ok = await confirmModal(
-        'Установить обновление',
-        `Установить Skvoz ${pendingAppUpdateInfo?.latest ?? ''} и перезапустить приложение?`
-      );
-      if (!ok) return;
-      setBusy(true);
-      try {
-        await api.applyAppUpdate();
-      } catch (err) {
-        reportFailure(err, 'Не удалось установить обновление');
-        setBusy(false);
-      }
-    })();
-    return;
-  }
-  void installAppUpdate();
-});
+els.btnInstallAppUpdate.addEventListener('click', () => void installAppUpdate());
 
 els.btnOpenAppRelease.addEventListener('click', () => void api.openAppReleasePage());
 

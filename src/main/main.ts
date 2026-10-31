@@ -545,7 +545,7 @@ function createWindow(): void {
   });
 
   mainWindow.on('close', (event) => {
-    if (config.minimizeToTray && tray) {
+    if (!appQuitting && config.minimizeToTray && tray) {
       event.preventDefault();
       mainWindow?.hide();
     }
@@ -733,10 +733,7 @@ function buildTrayMenu(): Menu {
     { type: 'separator' },
     {
       label: 'Выход',
-      click: () => {
-        config.minimizeToTray = false;
-        app.quit();
-      },
+      click: () => quitApp(),
     },
   ]);
 }
@@ -1623,7 +1620,7 @@ function registerIpc(): void {
     const update = pendingAppUpdate;
     pendingAppUpdate = null;
     scheduleAppUpdateApply(update);
-    setTimeout(() => app.quit(), 900);
+    setTimeout(() => quitApp(), 600);
     return { ok: true, version: update.version };
   });
 
@@ -1767,6 +1764,19 @@ function focusMainWindow(): void {
   }
 
   void app.whenReady().then(show);
+}
+
+/** Сворачивание в трей не должно мешать настоящему выходу (меню трея, установка обновления). */
+let appQuitting = false;
+app.on('before-quit', () => {
+  appQuitting = true;
+});
+
+function quitApp(): void {
+  appQuitting = true;
+  app.quit();
+  // Если что-то держит процесс (зависший сокет прокси и т.п.) — выходим принудительно
+  setTimeout(() => app.exit(0), 5_000).unref();
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
