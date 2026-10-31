@@ -197,9 +197,6 @@
             <p class="runtime-lock-hint hidden" id="pathLockHint">Остановите обход, чтобы менять папку или обновлять zapret</p>
           </div>
 
-          <button class="control-elsewhere" type="button" data-goto="home" title="Включение и выключение — на Главной и в трее">
-            <span>Вкл / выкл</span><strong>на Главной →</strong>
-          </button>
           <div class="power-zone hidden" id="powerZone">
             <div class="power-stack">
               <div class="power-ring"></div>
@@ -278,10 +275,7 @@
               <div class="tg-stat-row"><span class="tg-stat" id="tgStatBad">0</span><span class="tg-stat-label">Ошибки</span></div>
             </div>
           </div>
-          <div class="tg-deck-actions">
-            <button class="control-elsewhere" type="button" data-goto="home" title="Включение и выключение — на Главной и в трее">
-              <span>Вкл / выкл</span><strong>на Главной →</strong>
-            </button>
+          <div class="tg-deck-actions hidden">
             <button class="hidden" id="btnTgToggle" type="button">Запустить</button>
             <button class="hidden" id="btnTgDisconnect" type="button">Отключить</button>
           </div>
@@ -457,12 +451,22 @@
               <option value="exclude-ips">Исключить IP / подсети</option>
             </select>
             <p class="hint user-list-hint" id="userListHint">—</p>
-            <textarea id="userListEditor" class="user-list-editor" rows="5" spellcheck="false" placeholder="example.com"></textarea>
             <div class="user-list-quick">
               <input id="userListQuickAdd" class="user-list-input" type="text" placeholder="example.com или 192.168.0.0/24" autocomplete="off">
-              <button class="btn btn-soft btn-sm" id="btnUserListAdd" type="button">Добавить</button>
-              <button class="btn btn-glow btn-sm" id="btnUserListSave" type="button">Сохранить</button>
+              <button class="btn btn-glow btn-sm" id="btnUserListAdd" type="button">Добавить</button>
             </div>
+            <div class="user-list-summary">
+              <span class="user-list-count" id="userListCount">Добавлено: 0</span>
+            </div>
+            <ul class="user-list-chips" id="userListChips" aria-label="Добавленные адреса"></ul>
+            <details class="user-list-raw" id="userListRaw">
+              <summary>Редактировать текстом</summary>
+              <textarea id="userListEditor" class="user-list-editor" rows="5" spellcheck="false" placeholder="example.com"></textarea>
+              <div class="user-list-raw-foot">
+                <span class="hint">По одному адресу на строку, строки с # — комментарии</span>
+                <button class="btn btn-soft btn-sm" id="btnUserListSave" type="button">Сохранить</button>
+              </div>
+            </details>
           </div>
         </div>
         <p class="runtime-lock-hint hidden" id="settingsLockHint">Остановите обход, чтобы менять фильтры и списки</p>

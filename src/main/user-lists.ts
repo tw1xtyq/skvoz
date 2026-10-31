@@ -143,18 +143,15 @@ export function readUserLists(root: string): UserListsPayload {
 function formatListContent(kind: UserListKind, entries: string[]): string {
   const body = entries.join('\n');
   if (kind === 'general') {
-    return `# Пользовательские домены и IP\n${body}\n`;
+    // zapret не любит пустой файл — оставляем служебную заглушку
+    return `# Пользовательские домены и IP\n${body || 'domain.example.abc'}\n`;
   }
   return body ? `${body}\n` : '';
 }
 
 export function saveUserList(root: string, kind: UserListKind, raw: string): UserListsPayload {
   ensureUserListFiles(root);
-  const entries = parseListLines(raw);
-
-  if (kind === 'general' && entries.length === 0) {
-    throw new Error('Список для обхода не может быть пустым. Добавьте хотя бы один домен или IP.');
-  }
+  const entries = parseListLines(raw).filter((line) => !PLACEHOLDER_LINES.has(line.toLowerCase()));
 
   for (const entry of entries) {
     const error = validateEntry(kind, entry);
@@ -195,10 +192,6 @@ export function addUserListEntries(
     currentKeys.add(key);
     current.push(entry);
     added.push(entry);
-  }
-
-  if (kind === 'general' && current.length === 0) {
-    throw new Error('Добавьте хотя бы один домен или IP.');
   }
 
   fs.writeFileSync(listPath(root, kind), formatListContent(kind, current), 'utf8');

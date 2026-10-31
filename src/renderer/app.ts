@@ -224,7 +224,7 @@ interface TestResultPayload {
 type UserListKind = 'general' | 'exclude-domains' | 'exclude-ips';
 
 const USER_LIST_HINTS: Record<UserListKind, string> = {
-  general: 'Домены и IP для обхода — по одному на строку. Список не должен быть пустым.',
+  general: 'Домены и IP, которые пойдут через обход.',
   'exclude-domains': 'Домены, которые zapret не трогает. Исключения важнее списка обхода.',
   'exclude-ips': 'IP или подсеть CIDR — не попадут под IPSet-фильтр.',
 };
@@ -311,6 +311,8 @@ const els = {
   userListKind: document.getElementById('userListKind') as HTMLSelectElement,
   userListHint: document.getElementById('userListHint')!,
   userListEditor: document.getElementById('userListEditor') as HTMLTextAreaElement,
+  userListChips: document.getElementById('userListChips') as HTMLUListElement,
+  userListCount: document.getElementById('userListCount')!,
   userListQuickAdd: document.getElementById('userListQuickAdd') as HTMLInputElement,
   btnUserListAdd: document.getElementById('btnUserListAdd') as HTMLButtonElement,
   btnUserListSave: document.getElementById('btnUserListSave') as HTMLButtonElement,
@@ -829,6 +831,9 @@ function updateControls(status: StatusPayload | null): void {
   els.userListQuickAdd.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.btnUserListAdd.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.btnUserListSave.disabled = pickLocked || busy || !hasPath || runningLocked;
+  els.userListChips.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    button.disabled = els.userListQuickAdd.disabled;
+  });
   els.checkUpdatesToggle.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.launchAtStartupToggle.disabled = pickLocked || busy;
   els.autoStartBypassToggle.disabled = pickLocked || busy;
@@ -877,9 +882,78 @@ function currentUserListKind(): UserListKind {
   return 'general';
 }
 
-function applyUserListEditor(kind: UserListKind): void {
+/** Заглушки, которые zapret кладёт в пустые списки, — пользователю их не показываем. */
+const USER_LIST_PLACEHOLDERS = new Set(['domain.example.abc', '203.0.113.113/32']);
+
+function userListEntries(raw: string): string[] {
+  const seen = new Set<string>();
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      const key = line.toLowerCase();
+      if (!line || line.startsWith('#') || USER_LIST_PLACEHOLDERS.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function renderUserListChips(kind: UserListKind, highlight: string[] = []): void {
+  const entries = userListEntries(userListsCache?.[kind] ?? '');
+  const fresh = new Set(highlight.map((entry) => entry.toLowerCase()));
+  els.userListCount.textContent = `Добавлено: ${entries.length}`;
+  els.userListChips.replaceChildren();
+
+  if (entries.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'user-list-empty';
+    empty.textContent = 'Пока ничего не добавлено';
+    els.userListChips.append(empty);
+    return;
+  }
+
+  // Новые сверху, чтобы только что добавленное было видно сразу
+  for (const entry of [...entries].reverse()) {
+    const chip = document.createElement('li');
+    chip.className = 'user-list-chip';
+    if (fresh.has(entry.toLowerCase())) chip.classList.add('is-new');
+    const text = document.createElement('span');
+    text.textContent = entry;
+    text.title = entry;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'user-list-chip-remove';
+    remove.textContent = '×';
+    remove.title = `Удалить ${entry}`;
+    remove.setAttribute('aria-label', `Удалить ${entry}`);
+    remove.disabled = els.userListQuickAdd.disabled;
+    remove.addEventListener('click', () => void removeUserListEntry(kind, entry));
+    chip.append(text, remove);
+    els.userListChips.append(chip);
+  }
+}
+
+async function removeUserListEntry(kind: UserListKind, entry: string): Promise<void> {
+  if (busy || !currentStatus?.pathsValid || !userListsCache) return;
+  const remaining = userListEntries(userListsCache[kind]).filter((line) => line.toLowerCase() !== entry.toLowerCase());
+  setBusy(true);
+  try {
+    const result = await api.saveUserList(kind, remaining.join('\n'));
+    userListsCache = result.lists;
+    applyUserListEditor(kind);
+    toast(`Удалено: ${entry}`, 'info');
+    userListApplyHint(!!currentStatus.bypass.running);
+  } catch (err) {
+    reportFailure(err);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function applyUserListEditor(kind: UserListKind, highlight: string[] = []): void {
   els.userListHint.textContent = USER_LIST_HINTS[kind];
-  els.userListEditor.value = userListsCache?.[kind] ?? '';
+  els.userListEditor.value = userListEntries(userListsCache?.[kind] ?? '').join('\n');
+  renderUserListChips(kind, highlight);
   els.userListQuickAdd.placeholder =
     kind === 'exclude-ips' ? '192.168.0.0/24' : 'example.com или 1.2.3.4';
 }
@@ -888,6 +962,7 @@ async function loadUserLists(force = false): Promise<void> {
   if (!currentStatus?.pathsValid) {
     userListsCache = null;
     els.userListEditor.value = '';
+    renderUserListChips(currentUserListKind());
     return;
   }
   if (userListsCache && !force) {
@@ -935,7 +1010,7 @@ async function addUserListQuick(): Promise<void> {
   try {
     const result = await api.addUserListEntries(kind, [entry]);
     userListsCache = result.lists;
-    applyUserListEditor(kind);
+    applyUserListEditor(kind, result.added);
     els.userListQuickAdd.value = '';
 
     if (result.added.length > 0) {
@@ -943,6 +1018,7 @@ async function addUserListQuick(): Promise<void> {
       userListApplyHint(!!currentStatus.bypass.running);
     } else if (result.skipped.length > 0) {
       toast('Уже есть в списке', 'info');
+      applyUserListEditor(kind, result.skipped);
     }
   } catch (err) {
     reportFailure(err);
