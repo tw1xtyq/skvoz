@@ -622,6 +622,8 @@ function createTrayWindow(): BrowserWindow {
       nodeIntegration: false,
       spellcheck: false,
       devTools: !app.isPackaged,
+      // скрытое окно не должно «замерзать», иначе при открытии мелькает старый кадр
+      backgroundThrottling: false,
     },
   });
   win.loadFile(path.join(__dirname, '..', 'renderer', 'tray.html'));
@@ -665,8 +667,16 @@ function toggleTrayWindow(): void {
   }
   positionTrayWindow(trayWindow);
   trayWindow.setBackgroundColor(WINDOW_BACKGROUND);
-  trayWindow.show();
-  trayWindow.focus();
+  // Показываем прозрачным, даём интерфейсу сбросить анимацию и отрисовать первый кадр,
+  // и только потом проявляем — без вспышки прошлого состояния
+  const win = trayWindow;
+  win.setOpacity(0);
+  win.show();
+  win.focus();
+  win.webContents.send('tray-reveal');
+  setTimeout(() => {
+    if (!win.isDestroyed() && win.isVisible()) win.setOpacity(1);
+  }, 40);
 }
 
 function createTray(): void {

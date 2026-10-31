@@ -16,6 +16,7 @@ interface TrayApi {
   tgwsStop(): Promise<unknown>;
   checkAccess(): Promise<Array<{ id: string; status: 'ok' | 'partial' | 'fail'; detail: string }>>;
   showMainWindow(): Promise<unknown>;
+  onTrayReveal(callback: () => void): () => void;
 }
 
 const trayApi = (window as unknown as { zapretApi: TrayApi }).zapretApi;
@@ -125,8 +126,8 @@ document.addEventListener('visibilitychange', () => {
     startPolling();
   }
 });
-window.addEventListener('focus', () => {
-  // каждое открытие — короткая анимация появления
+// Каждое открытие — короткая анимация появления; сигнал приходит до того, как окно станет видимым
+trayApi.onTrayReveal(() => {
   document.body.classList.remove('reveal');
   void document.body.offsetWidth;
   document.body.classList.add('reveal');

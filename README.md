@@ -6,10 +6,10 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 
 ## Скачать
 
-**Версия 1.9.4:**
+**Версия 1.9.5:**
 
-- [**Skvoz-Setup-1.9.4.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.9.4/Skvoz-Setup-1.9.4.exe) — установщик (рекомендуется)
-- [**Skvoz-1.9.4-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.9.4/Skvoz-1.9.4-Portable.exe) — без установки, один файл
+- [**Skvoz-Setup-1.9.5.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.9.5/Skvoz-Setup-1.9.5.exe) — установщик (рекомендуется)
+- [**Skvoz-1.9.5-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.9.5/Skvoz-1.9.5-Portable.exe) — без установки, один файл
 
 Все версии и список изменений — на странице [Releases](https://github.com/tw1xtyq/skvoz/releases).
 

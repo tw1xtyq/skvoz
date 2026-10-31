@@ -4017,3 +4017,24 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
   vertical-align: -1px;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M8 7h9v9'/%3E%3C/svg%3E") center / contain no-repeat;
 }
+
+/* ── Строки настроек как в Windows 11: текст слева, переключатель справа, тонкие разделители ── */
+.setting-block-compact {
+  margin-top: 0;
+  padding: 12px 0;
+}
+.setting-block-compact + .setting-block-compact { border-top: 1px solid var(--line); }
+.card-head + .setting-block-compact { padding-top: 4px; }
+.bento-card > .setting-block-compact:last-child { padding-bottom: 0; }
+.setting-block .switch {
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+.setting-block .switch .switch-ui { flex: 0 0 auto; }
+.switch-title { font-size: 0.84rem; }
+.switch-desc { line-height: 1.4; }
+.setting-block-compact:hover .switch-title { color: var(--text); }
+.setting-row { gap: 12px; }

@@ -82,6 +82,11 @@ contextBridge.exposeInMainWorld('zapretApi', {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
   restartAsAdmin: () => ipcRenderer.invoke('restart-as-admin'),
+  onTrayReveal: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('tray-reveal', listener);
+    return () => ipcRenderer.removeListener('tray-reveal', listener);
+  },
   onDownloadProgress: (callback: (progress: DownloadProgress) => void) => {
     const listener = (_event: IpcRendererEvent, progress: DownloadProgress) => callback(progress);
     ipcRenderer.on('download-progress', listener);
