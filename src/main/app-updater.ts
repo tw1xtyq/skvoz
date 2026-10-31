@@ -81,10 +81,17 @@ ${script}
   return updaterPath;
 }
 
+/**
+ * Из Electron отсоединённый powershell.exe не стартует вовсе, а обычный дочерний
+ * погибает вместе с приложением. Через `cmd /c start` скрипт переживает выход.
+ */
 function spawnUpdaterScript(updaterPath: string): void {
   spawn(
-    'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', updaterPath],
+    'cmd.exe',
+    [
+      '/d', '/c', 'start', '""', '/b',
+      'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', updaterPath,
+    ],
     {
       detached: true,
       stdio: 'ignore',
