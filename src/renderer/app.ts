@@ -1439,12 +1439,12 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   updatePowerButton(running, true);
 
   const nextStatus = !status.pathsValid
-    ? 'Нет zapret'
+    ? 'Zapret не найден'
     : !status.isOfficial
-      ? 'Неофициальный'
+      ? 'Неофициальный zapret'
       : running
-        ? 'Работает'
-        : 'Готов';
+        ? 'Обход включён'
+        : 'Обход выключен';
   if (els.statusText.textContent !== nextStatus) {
     flashStatusText();
     els.statusText.textContent = nextStatus;
@@ -2183,6 +2183,11 @@ async function runAccessCheck(): Promise<void> {
 }
 
 els.btnCheckAccess.addEventListener('click', () => void runAccessCheck());
+
+// При открытии сразу показываем, что работает, — пустые «не проверялось» ничего не говорят
+window.setTimeout(() => {
+  if (currentStatus?.pathsValid && !accessCheckRunning) void runAccessCheck();
+}, 3_000);
 
 // ── Telegram proxy tab ──────────────────────────────────────────────────────
 

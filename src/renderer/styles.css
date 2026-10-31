@@ -75,7 +75,7 @@
   --line-strong: rgba(170, 178, 255, 0.20);
   --text: #eef0ff;
   --muted: #9297b0;
-  --dim: #666b85;
+  --dim: #8085a2;
   --accent: #8f7dff;
   --accent-soft: rgba(143, 125, 255, 0.16);
   --ok: #30d158;
@@ -1989,11 +1989,9 @@ select:hover:not(:disabled) {
 }
 
 .journal-head-copy h3 {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 650;
   color: var(--text);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .journal-status {
