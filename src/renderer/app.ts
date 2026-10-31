@@ -105,6 +105,7 @@ interface ZapretApi {
       autoPickBestStrategy?: boolean;
       minimizeToTray?: boolean;
       autoUpdateZapret?: boolean;
+      bypassAutoRecover?: boolean;
       skipAutoBootstrap?: boolean;
     };
     status: StatusPayload;
@@ -114,6 +115,7 @@ interface ZapretApi {
   setAutoPickBestStrategy(enabled: boolean): Promise<{ autoPickBestStrategy: boolean }>;
   setMinimizeToTray(enabled: boolean): Promise<{ minimizeToTray: boolean }>;
   setAutoUpdateZapret(enabled: boolean): Promise<{ autoUpdateZapret: boolean }>;
+  setBypassAutoRecover(enabled: boolean): Promise<{ bypassAutoRecover: boolean }>;
   getBootstrapState(): Promise<BootstrapState | null>;
   rescanZapret(): Promise<BootstrapState | null>;
   getStatus(): Promise<StatusPayload>;
@@ -276,9 +278,10 @@ const els = {
   btnChangePathEmpty: document.getElementById('btnChangePathEmpty') as HTMLButtonElement,
   btnDownload: document.getElementById('btnDownload') as HTMLButtonElement,
   btnDownloadInline: document.getElementById('btnDownloadInline') as HTMLButtonElement,
-  linkAppRepo: document.getElementById('linkAppRepo') as HTMLAnchorElement,
-  linkCheckAppUpdate: document.getElementById('linkCheckAppUpdate') as HTMLAnchorElement,
-  linkOfficial: document.getElementById('linkOfficial') as HTMLAnchorElement,
+  linkAppRepo: document.getElementById('linkAppRepo') as HTMLButtonElement,
+  linkCheckAppUpdate: document.getElementById('linkCheckAppUpdate') as HTMLButtonElement,
+  linkAppDocs: document.getElementById('linkAppDocs') as HTMLButtonElement,
+  linkOfficial: document.getElementById('linkOfficial') as HTMLButtonElement,
   progressWrap: document.getElementById('progressWrap')!,
   progressFill: document.getElementById('progressFill')!,
   progressText: document.getElementById('progressText')!,
@@ -306,6 +309,7 @@ const els = {
   autoPickStrategyToggle: document.getElementById('autoPickStrategyToggle') as HTMLInputElement,
   minimizeToTrayToggle: document.getElementById('minimizeToTrayToggle') as HTMLInputElement,
   autoUpdateZapretToggle: document.getElementById('autoUpdateZapretToggle') as HTMLInputElement,
+  bypassAutoRecoverToggle: document.getElementById('bypassAutoRecoverToggle') as HTMLInputElement,
   quickBypassMeta: document.getElementById('quickBypassMeta')!,
   quickTgMeta: document.getElementById('quickTgMeta')!,
   userListKind: document.getElementById('userListKind') as HTMLSelectElement,
@@ -840,6 +844,7 @@ function updateControls(status: StatusPayload | null): void {
   els.autoPickStrategyToggle.disabled = pickLocked || busy;
   els.minimizeToTrayToggle.disabled = pickLocked || busy;
   els.autoUpdateZapretToggle.disabled = pickLocked || busy;
+  els.bypassAutoRecoverToggle.disabled = pickLocked || busy;
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
   els.btnQuickBypass.disabled = pickLocked || busy || (running ? !hasPath : !canStart);
@@ -1498,6 +1503,7 @@ async function refreshStatus(full = true): Promise<void> {
     els.autoPickStrategyToggle.checked = config.autoPickBestStrategy !== false;
     els.minimizeToTrayToggle.checked = config.minimizeToTray !== false;
     els.autoUpdateZapretToggle.checked = config.autoUpdateZapret !== false;
+    els.bypassAutoRecoverToggle.checked = config.bypassAutoRecover !== false;
     showOfficialWarning(status);
     if (full) {
       void loadUserLists();
@@ -1849,6 +1855,8 @@ els.btnDismissAppUpdate.addEventListener('click', () => {
   })();
 });
 
+els.linkAppDocs.addEventListener('click', () => void api.openExternal('https://github.com/tw1xtyq/skvoz#readme'));
+
 els.linkOfficial.addEventListener('click', (e) => {
   e.preventDefault();
   void api.openDownloadPage();
@@ -1958,6 +1966,9 @@ els.autoPickStrategyToggle.addEventListener('change', () =>
 els.autoUpdateZapretToggle.addEventListener('change', () =>
   void runAction('Автообновление zapret', () => api.setAutoUpdateZapret(els.autoUpdateZapretToggle.checked))
 );
+els.bypassAutoRecoverToggle.addEventListener('change', () =>
+  void runAction('Автовосстановление обхода', () => api.setBypassAutoRecover(els.bypassAutoRecoverToggle.checked))
+);
 els.minimizeToTrayToggle.addEventListener('change', () =>
   void runAction('Сворачивание в трей', () => api.setMinimizeToTray(els.minimizeToTrayToggle.checked))
 );
@@ -2034,14 +2045,15 @@ els.btnRestartAdmin?.addEventListener('click', () => {
 
 // ── App tabs ────────────────────────────────────────────────────────────────
 
-type AppView = 'home' | 'bypass' | 'telegram' | 'settings' | 'tools';
+type AppView = 'home' | 'bypass' | 'telegram' | 'settings' | 'auto' | 'tools';
 
 const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
   home: ['Главная', 'Zapret и Telegram proxy в одном окне'],
   bypass: ['Обход', 'Запуск zapret и выбор конфига'],
   telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
-  settings: ['Настройки', 'Автозапуск, фильтры и свои списки'],
-  tools: ['Сервис', 'Инструменты, журнал и о приложении'],
+  settings: ['Фильтры', 'Игровой фильтр, IPSet и свои списки'],
+  auto: ['Авто', 'Автозапуск, восстановление и обновления'],
+  tools: ['Сервис', 'Инструменты, журнал и о программе'],
 };
 
 function moveNavIndicator(): void {
@@ -2120,8 +2132,8 @@ document.addEventListener('keydown', (event) => {
   toast('Статус обновлён', 'info');
 });
 
-// Ctrl+1…5 — страницы
-const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'settings', 'tools'];
+// Ctrl+1…6 — страницы
+const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'settings', 'auto', 'tools'];
 document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
   const index = Number(event.key) - 1;
@@ -2223,8 +2235,8 @@ async function loadTgwsState(): Promise<void> {
       els.tgPort.value = String(tgwsConfig.port);
       els.tgHost.value = tgwsConfig.host;
       els.tgSecret.value = tgwsConfig.secretHex;
-      els.tgAutostart.checked = tgwsConfig.autostart;
     }
+    els.tgAutostart.checked = tgwsConfig.autostart;
   } catch (err) {
     log(`TG proxy: ${formatUserError(err)}`, 'error');
   }
@@ -2305,7 +2317,21 @@ els.btnTgOpenTg.addEventListener('click', async () => {
   }
 });
 
-for (const input of [els.tgPort, els.tgHost, els.tgSecret, els.tgAutostart]) {
+els.tgAutostart.addEventListener('change', () => {
+  const enabled = els.tgAutostart.checked;
+  void api
+    .tgwsSetConfig({ autostart: enabled })
+    .then(() => {
+      toast(enabled ? 'Прокси будет запускаться вместе с приложением' : 'Автозапуск прокси выключен', 'success');
+      void loadTgwsState();
+    })
+    .catch((err) => {
+      els.tgAutostart.checked = !enabled;
+      reportFailure(err, 'Не удалось сохранить автозапуск прокси');
+    });
+});
+
+for (const input of [els.tgPort, els.tgHost, els.tgSecret]) {
   input.addEventListener('input', () => { tgConfigDirty = true; });
   input.addEventListener('change', () => { tgConfigDirty = true; });
 }
@@ -2335,7 +2361,6 @@ els.btnTgSaveConfig.addEventListener('click', async () => {
     const updates: Partial<TgwsProxyConfig> = {
       port: portVal,
       host: els.tgHost.value.trim() || '127.0.0.1',
-      autostart: els.tgAutostart.checked,
     };
     if (secretVal) updates.secretHex = secretVal;
     await api.tgwsSetConfig(updates);

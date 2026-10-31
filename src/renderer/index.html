@@ -35,11 +35,15 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 4.5 3.5 11l6 2.2 2.2 6.3 3.1-4 4.2 3.1z"/><path d="m9.5 13.2 6.7-5.4"/></svg>
         <b>Telegram</b>
       </button>
-      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="4" title="Ctrl+4 · Настройки">
+      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="4" title="Ctrl+4 · Фильтры и свои списки">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
-        <b>Настройки</b>
+        <b>Фильтры</b>
       </button>
-      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="5" title="Ctrl+5 · Инструменты и журнал">
+      <button class="side-nav-btn" id="navAuto" type="button" data-view="auto" data-hotkey="5" title="Ctrl+5 · Автозапуск и обновления">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/><path d="M12 8v4l3 2"/></svg>
+        <b>Авто</b>
+      </button>
+      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Инструменты, журнал и о программе">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 10 2.5 2L8 14M12.5 14H16"/></svg>
         <b>Сервис</b>
       </button>
@@ -315,14 +319,6 @@
           </div>
         </div>
         <div class="tg-form-foot">
-          <label class="switch">
-            <input type="checkbox" id="tgAutostart">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Автозапуск прокси</span>
-              <span class="switch-desc">Запускать вместе с приложением</span>
-            </span>
-          </label>
           <div class="tg-actions">
             <button class="btn btn-soft btn-sm" id="btnTgOpenTg" type="button">Открыть в Telegram</button>
             <button class="btn btn-glow btn-sm" id="btnTgSaveConfig" type="button">Сохранить</button>
@@ -333,71 +329,6 @@
 
     <!-- Настройки -->
     <section class="page" data-page="settings">
-      <section class="glass-card bento-card">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon">⏻</span>
-            <h3>Запуск и обновления</h3>
-          </div>
-          <p class="card-hint">Поведение при старте Windows и обновление zapret</p>
-        </header>
-
-        <div class="setting-block setting-block-compact">
-          <label class="switch">
-            <input type="checkbox" id="launchAtStartupToggle">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Автозапуск приложения</span>
-              <span class="switch-desc">Открывать Skvoz при старте Windows</span>
-            </span>
-          </label>
-        </div>
-
-        <div class="setting-block setting-block-compact">
-          <label class="switch">
-            <input type="checkbox" id="autoStartBypassToggle">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Автозапуск обхода</span>
-              <span class="switch-desc">Запускать zapret при открытии приложения (включит автозапуск приложения)</span>
-            </span>
-          </label>
-        </div>
-
-        <div class="setting-block setting-block-compact">
-          <label class="switch">
-            <input type="checkbox" id="minimizeToTrayToggle">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Сворачивать в трей</span>
-              <span class="switch-desc">Крестик прячет окно, обход и прокси продолжают работать</span>
-            </span>
-          </label>
-        </div>
-
-        <div class="setting-block setting-block-compact">
-          <label class="switch">
-            <input type="checkbox" id="autoUpdateZapretToggle">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Автообновление zapret</span>
-              <span class="switch-desc">Раз в 6 часов ставит новый релиз с GitHub, свои списки и конфиг сохраняются</span>
-            </span>
-          </label>
-        </div>
-
-        <div class="setting-block setting-block-compact">
-          <label class="switch">
-            <input type="checkbox" id="autoPickStrategyToggle">
-            <span class="switch-ui"></span>
-            <span class="switch-copy">
-              <span class="switch-title">Автоподбор конфига</span>
-              <span class="switch-desc">При первом запуске — проверка всех .bat с прогрессом и возможностью отмены</span>
-            </span>
-          </label>
-        </div>
-      </section>
-
       <section class="glass-card bento-card needs-zapret">
         <header class="card-head card-head-stack">
           <div class="card-head-row">
@@ -473,6 +404,116 @@
       </section>
     </section>
 
+    <!-- Авто -->
+    <section class="page" data-page="auto">
+      <section class="glass-card bento-card">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon">⏻</span>
+            <h3>Запуск</h3>
+          </div>
+          <p class="card-hint">Что происходит при входе в Windows и при закрытии окна</p>
+        </header>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="launchAtStartupToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск приложения</span>
+                <span class="switch-desc">Открывать Skvoz при входе в Windows</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoStartBypassToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск обхода</span>
+                <span class="switch-desc">Включать zapret при открытии приложения (включит и автозапуск приложения)</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="tgAutostart">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск прокси</span>
+                <span class="switch-desc">Включать TG WS Proxy при открытии приложения</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="minimizeToTrayToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Сворачивать в трей</span>
+                <span class="switch-desc">Крестик прячет окно, обход и прокси продолжают работать</span>
+              </span>
+            </label>
+          </div>
+      </section>
+
+      <section class="glass-card bento-card">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon">◎</span>
+            <h3>Обход</h3>
+          </div>
+          <p class="card-hint">Подбор конфига и восстановление при сбоях</p>
+        </header>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoPickStrategyToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автоподбор конфига</span>
+                <span class="switch-desc">При первом запуске проверить все .bat и выбрать лучший</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="bypassAutoRecoverToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автовосстановление</span>
+                <span class="switch-desc">Перезапускать обход, если winws упал или сайты перестали открываться</span>
+              </span>
+            </label>
+          </div>
+      </section>
+
+      <section class="glass-card bento-card">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon">↻</span>
+            <h3>Обновления</h3>
+          </div>
+          <p class="card-hint">Zapret и само приложение</p>
+        </header>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoUpdateZapretToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автообновление zapret</span>
+                <span class="switch-desc">Раз в 6 часов ставит новый релиз с GitHub, свои списки и конфиг сохраняются</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact setting-row">
+            <span class="switch-copy">
+              <span class="switch-title">Обновления Skvoz</span>
+              <span class="switch-desc" id="appUpdateAutoLine">Проверяются при запуске и раз в 6 часов, ставятся одной кнопкой</span>
+            </span>
+            <button class="btn btn-soft btn-sm" id="linkCheckAppUpdate" type="button">Проверить сейчас</button>
+          </div>
+      </section>
+    </section>
+
     <!-- Сервис -->
     <section class="page" data-page="tools">
       <section class="glass-card bento-card needs-zapret">
@@ -528,16 +569,26 @@
         <div class="terminal-body expanded" id="log"></div>
       </section>
 
-      <footer class="footer">
-        <p class="footer-version" id="appVersionLine">Skvoz v—</p>
-        <div class="footer-links">
-          <a href="#" id="linkCheckAppUpdate">Проверить обновления</a>
-          <span class="footer-dot"></span>
-          <a href="#" id="linkAppRepo">tw1xtyq/skvoz</a>
-          <span class="footer-dot"></span>
-          <a href="#" id="linkOfficial">Официальный zapret</a>
+      <section class="glass-card bento-card about-card">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon">ⓘ</span>
+            <h3>О программе</h3>
+          </div>
+          <p class="card-hint" id="appVersionLine">Skvoz v—</p>
+        </header>
+        <div class="about-links">
+          <button class="about-link" id="linkAppRepo" type="button">
+            <strong>Релизы и изменения</strong><span>github.com/tw1xtyq/skvoz</span>
+          </button>
+          <button class="about-link" id="linkAppDocs" type="button">
+            <strong>Инструкция</strong><span>Как пользоваться, списки, обновления</span>
+          </button>
+          <button class="about-link" id="linkOfficial" type="button">
+            <strong>Официальный zapret</strong><span>Flowseal/zapret-discord-youtube</span>
+          </button>
         </div>
-      </footer>
+      </section>
     </section>
   </div>
 

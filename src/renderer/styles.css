@@ -3918,3 +3918,34 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
   margin-top: 8px;
 }
 .user-list-raw-foot .hint { margin: 0; }
+
+/* Форма прокси: автозапуск переехал во вкладку «Авто», кнопки справа */
+.tg-form-foot { justify-content: flex-end; }
+
+/* О программе: ссылки карточками вместо строки в подвале */
+.about-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+.about-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease), transform 0.25s var(--ease);
+}
+.about-link strong { font-size: 0.82rem; font-weight: 600; }
+.about-link strong::after { content: ' ↗'; color: var(--dim); font-weight: 400; }
+.about-link span { overflow: hidden; color: var(--muted); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.about-link:hover { border-color: var(--line-strong); background: var(--surface-hover); transform: translateY(-1px); }
+.about-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#appVersionLine { font-variant-numeric: tabular-nums; }

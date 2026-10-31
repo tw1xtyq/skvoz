@@ -1228,6 +1228,12 @@ function registerIpc(): void {
     return { ok: true };
   });
 
+  ipcMain.handle('set-bypass-auto-recover', (_e, enabled: boolean) => {
+    config.bypassAutoRecover = !!enabled;
+    saveConfig(config);
+    return { bypassAutoRecover: config.bypassAutoRecover };
+  });
+
   ipcMain.handle('set-minimize-to-tray', (_e, enabled: boolean) => {
     config.minimizeToTray = !!enabled;
     saveConfig(config);
@@ -1739,6 +1745,8 @@ function registerIpc(): void {
   ipcMain.handle('tgws-proxy-link', () => tgwsProxy.buildProxyLink());
 
   ipcMain.handle('open-external', async (_e, url: string) => {
+    // Только веб-ссылки и ссылки Telegram — никаких file:// и запуска программ
+    if (!/^(https:\/\/|tg:\/\/)/i.test(String(url))) throw new Error('Недопустимая ссылка');
     await shell.openExternal(url);
     return { ok: true };
   });

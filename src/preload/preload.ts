@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('zapretApi', {
   setAutoPickBestStrategy: (enabled: boolean) => ipcRenderer.invoke('set-auto-pick-best-strategy', enabled),
   setMinimizeToTray: (enabled: boolean) => ipcRenderer.invoke('set-minimize-to-tray', enabled),
   setAutoUpdateZapret: (enabled: boolean) => ipcRenderer.invoke('set-auto-update-zapret', enabled),
+  setBypassAutoRecover: (enabled: boolean) => ipcRenderer.invoke('set-bypass-auto-recover', enabled),
   getBootstrapState: () => ipcRenderer.invoke('get-bootstrap-state'),
   rescanZapret: () => ipcRenderer.invoke('rescan-zapret'),
   scanInstallations: () => ipcRenderer.invoke('scan-installations'),
