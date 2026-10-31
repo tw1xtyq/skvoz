@@ -41,6 +41,7 @@ interface AppUpdateInfo {
   current: string;
   latest: string | null;
   upToDate: boolean;
+  checkFailed?: boolean;
   releasePage: string | null;
   releaseNotes: string | null;
 }
@@ -276,6 +277,7 @@ const els = {
   btnDownload: document.getElementById('btnDownload') as HTMLButtonElement,
   btnDownloadInline: document.getElementById('btnDownloadInline') as HTMLButtonElement,
   linkAppRepo: document.getElementById('linkAppRepo') as HTMLAnchorElement,
+  linkCheckAppUpdate: document.getElementById('linkCheckAppUpdate') as HTMLAnchorElement,
   linkOfficial: document.getElementById('linkOfficial') as HTMLAnchorElement,
   progressWrap: document.getElementById('progressWrap')!,
   progressFill: document.getElementById('progressFill')!,
@@ -1726,6 +1728,33 @@ async function init(): Promise<void> {
 
 void init();
 scheduleStatusPoll();
+
+let appUpdateCheckRunning = false;
+els.linkCheckAppUpdate.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (appUpdateCheckRunning) return;
+  appUpdateCheckRunning = true;
+  const label = els.linkCheckAppUpdate.textContent;
+  els.linkCheckAppUpdate.textContent = 'Проверяем…';
+  void api
+    .checkAppUpdate()
+    .then((info) => {
+      if (info.checkFailed) {
+        toast('Не удалось связаться с GitHub — попробуйте позже', 'error');
+      } else if (info.upToDate || !info.latest) {
+        toast(`У вас последняя версия Skvoz ${info.current}`, 'success');
+      } else {
+        showAppUpdateBanner(info);
+        toast(`Доступна версия ${info.latest}`, 'info');
+        window.scrollTo({ top: 0 });
+      }
+    })
+    .catch((err) => toast(formatUserError(err), 'error'))
+    .finally(() => {
+      appUpdateCheckRunning = false;
+      els.linkCheckAppUpdate.textContent = label;
+    });
+});
 
 els.linkAppRepo.addEventListener('click', (e) => {
   e.preventDefault();

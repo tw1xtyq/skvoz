@@ -6,7 +6,7 @@ import path from 'path';
 import { runAutonomousBootstrap, type BootstrapState } from './autonomous';
 import { scanForInstallations, verifyInstallation } from './scanner';
 import { isWindowsAdmin, restartAsAdmin } from './admin';
-import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, syncLaunchAtStartup } from './autostart';
+import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, STARTUP_LAUNCH_ARG, syncLaunchAtStartup } from './autostart';
 import {
   addUserListEntries,
   readUserLists,
@@ -530,7 +530,7 @@ function createWindow(): void {
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   mainWindow.once('ready-to-show', () => {
-    const silentStartup = isStartupLaunch() && config.minimizeToTray;
+    const silentStartup = process.argv.includes(STARTUP_LAUNCH_ARG) && config.minimizeToTray;
     if (!silentStartup) {
       mainWindow?.show();
     }
@@ -1610,6 +1610,8 @@ function registerIpc(): void {
   ipcMain.handle('get-app-version', () => getCurrentAppVersion());
 
   ipcMain.handle('download-app-update', async () => {
+    // Уже скачано (в диалоге нажали «Отмена») — не качаем повторно
+    if (pendingAppUpdate && fs.existsSync(pendingAppUpdate.stagingPath)) return pendingAppUpdate;
     pendingAppUpdate = await downloadAppUpdate(sendDownloadProgress);
     return pendingAppUpdate;
   });

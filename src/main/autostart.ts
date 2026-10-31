@@ -4,9 +4,11 @@ import { runHidden } from './exec';
 
 const AUTOSTART_TASK_NAME = 'ZapretAppAutostart';
 export const STARTUP_LAUNCH_ARG = '--startup';
+/** Перезапуск после обновления: задачи автозапуска выполняются, но окно показываем. */
+export const UPDATED_LAUNCH_ARG = '--updated';
 
 export function isStartupLaunch(): boolean {
-  return process.argv.includes(STARTUP_LAUNCH_ARG);
+  return process.argv.includes(STARTUP_LAUNCH_ARG) || process.argv.includes(UPDATED_LAUNCH_ARG);
 }
 
 function useWindowsScheduledTask(): boolean {

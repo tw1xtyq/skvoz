@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { STARTUP_LAUNCH_ARG } from './autostart';
+import { UPDATED_LAUNCH_ARG } from './autostart';
 import { compareVersions, normalizeVersion } from './version-utils';
 import type { DownloadProgress } from './downloader';
 
@@ -60,9 +60,24 @@ function runPowerShell(script: string): Promise<string> {
   });
 }
 
+export const APP_UPDATE_LOG = path.join(os.tmpdir(), 'skvoz-update.log');
+
+/** Скрипт идёт в скрытом окне: пишем лог и показываем ошибку, а не молчим. */
 function writeUpdaterScript(script: string): string {
   const updaterPath = path.join(os.tmpdir(), `zapret-app-apply-${Date.now()}.ps1`);
-  fs.writeFileSync(updaterPath, `\uFEFF${script}`, 'utf8');
+  const releaseUrl = `https://github.com/${APP_GITHUB_REPO}/releases/latest`;
+  const wrapped = `Start-Transcript -LiteralPath ${psQuote(APP_UPDATE_LOG)} -Force | Out-Null
+try {
+${script}
+} catch {
+  Write-Output "ERROR: $($_.Exception.Message)"
+  Add-Type -AssemblyName PresentationFramework
+  $text = "Не удалось установить обновление Skvoz:\`n$($_.Exception.Message)\`n\`nСкачайте новую версию вручную:\`n${releaseUrl}"
+  [System.Windows.MessageBox]::Show($text, 'Skvoz') | Out-Null
+} finally {
+  Stop-Transcript | Out-Null
+}`;
+  fs.writeFileSync(updaterPath, `\uFEFF${wrapped}`, 'utf8');
   return updaterPath;
 }
 
@@ -81,12 +96,12 @@ function spawnUpdaterScript(updaterPath: string): void {
 function launchInstalledAppPs(exePath: string): string {
   const exe = psQuote(exePath);
   const dir = psQuote(path.dirname(exePath));
-  const startupArg = psQuote(STARTUP_LAUNCH_ARG);
+  const startupArg = psQuote(UPDATED_LAUNCH_ARG);
   return `
 if (-not (Test-Path -LiteralPath ${exe})) {
   throw "Не найден файл приложения: ${exePath.replace(/'/g, "''")}"
 }
-Start-Process -LiteralPath ${exe} -WorkingDirectory ${dir} -ArgumentList ${startupArg}
+Start-Process -FilePath ${exe} -WorkingDirectory ${dir} -ArgumentList ${startupArg}
 `.trim();
 }
 
@@ -116,6 +131,7 @@ function isInstalledViaNsis(): boolean {
   if (!app.isPackaged) return false;
   const exeDir = path.dirname(process.execPath);
   if (['Uninstall Skvoz.exe', 'Uninstall Zapret App.exe'].some((name) => fs.existsSync(path.join(exeDir, name)))) return true;
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return false;
   const exe = process.execPath.toLowerCase();
   return exe.includes('\\program files\\') || exe.includes('\\program files (x86)\\');
 }
@@ -235,38 +251,89 @@ function findAppRoot(dir: string): string | null {
   return null;
 }
 
+const DOWNLOAD_STALL_MS = 45_000;
+
 async function downloadFile(url: string, dest: string, onProgress: ProgressCallback): Promise<void> {
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'zapret-app' },
-    redirect: 'follow',
-  });
-
-  if (!response.ok || !response.body) {
-    throw new Error(`Ошибка загрузки обновления: HTTP ${response.status}`);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await downloadFileOnce(url, dest, onProgress);
+      return;
+    } catch (error) {
+      lastError = error;
+      fs.rmSync(dest, { force: true });
+      if (attempt < 3) {
+        onProgress({ stage: 'download', percent: 0, message: `Сбой загрузки, повтор ${attempt + 1}/3...` });
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+      }
+    }
   }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Не удалось скачать обновление: ${message}`);
+}
 
-  const total = parseInt(response.headers.get('content-length') ?? '0', 10);
-  const reader = response.body.getReader();
-  const file = fs.createWriteStream(dest);
-  let downloaded = 0;
+async function downloadFileOnce(url: string, dest: string, onProgress: ProgressCallback): Promise<void> {
+  const controller = new AbortController();
+  let stallTimer = setTimeout(() => controller.abort(), DOWNLOAD_STALL_MS);
+  const bump = (): void => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => controller.abort(), DOWNLOAD_STALL_MS);
+  };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    downloaded += value.length;
-    file.write(Buffer.from(value));
-    const percent = total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0;
-    onProgress({
-      stage: 'download',
-      percent,
-      message: total > 0 ? `Загрузка обновления: ${percent}%` : 'Загрузка обновления...',
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'zapret-app' },
+      redirect: 'follow',
+      signal: controller.signal,
     });
-  }
 
-  await new Promise<void>((resolve, reject) => {
-    file.end(() => resolve());
-    file.on('error', reject);
-  });
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const total = parseInt(response.headers.get('content-length') ?? '0', 10);
+    const reader = response.body.getReader();
+    const file = fs.createWriteStream(dest);
+    let downloaded = 0;
+    let lastPercent = -1;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bump();
+        downloaded += value.length;
+        if (!file.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => file.once('drain', () => resolve()));
+        }
+        const percent = total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0;
+        if (total > 0 && percent === lastPercent) continue;
+        lastPercent = percent;
+        const mb = (bytes: number): string => (bytes / 1048576).toFixed(1);
+        onProgress({
+          stage: 'download',
+          percent,
+          message: total > 0
+            ? `Загрузка обновления: ${mb(downloaded)} из ${mb(total)} МБ`
+            : `Загрузка обновления: ${mb(downloaded)} МБ`,
+        });
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        file.end(() => resolve());
+        file.on('error', reject);
+      });
+    }
+
+    if (total > 0 && downloaded !== total) {
+      throw new Error(`файл скачан не полностью (${downloaded} из ${total} байт)`);
+    }
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('GitHub не отвечает больше 45 секунд');
+    throw error;
+  } finally {
+    clearTimeout(stallTimer);
+  }
 }
 
 async function extractZip(zipPath: string, destDir: string, onProgress: ProgressCallback): Promise<void> {
@@ -357,7 +424,7 @@ npm run build | Out-Null
 
 $launcher = ${psQuote(launcher)}
 if (Test-Path -LiteralPath $launcher) {
-  Start-Process -FilePath $launcher -WorkingDirectory $dest -ArgumentList ${psQuote(STARTUP_LAUNCH_ARG)}
+  Start-Process -FilePath $launcher -WorkingDirectory $dest -ArgumentList ${psQuote(UPDATED_LAUNCH_ARG)}
 } else {
   Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'npm start' -WorkingDirectory $dest
 }
@@ -367,7 +434,8 @@ if (Test-Path -LiteralPath $launcher) {
 }
 
 function schedulePortableUpdateApply(stagingPath: string): void {
-  const currentExe = process.execPath;
+  // portable распаковывается во временную папку; настоящий exe — в PORTABLE_EXECUTABLE_FILE
+  const currentExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
   const pid = process.pid;
 
   const script = `
@@ -380,7 +448,7 @@ $target = ${psQuote(currentExe)}
 $backup = "$target.bak"
 $replaced = $false
 
-for ($attempt = 0; $attempt -lt 12; $attempt++) {
+for ($attempt = 0; $attempt -lt 30; $attempt++) {
   try {
     if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $target) { Move-Item -LiteralPath $target -Destination $backup -Force }
@@ -417,7 +485,7 @@ Start-Sleep -Seconds 2
 $installer = ${psQuote(stagingPath)}
 $target = ${psQuote(currentExe)}
 
-$proc = Start-Process -LiteralPath $installer -ArgumentList '/S' -PassThru -Wait
+$proc = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru -Wait
 if ($proc.ExitCode -ne 0) {
   throw "Установщик завершился с кодом $($proc.ExitCode)"
 }
