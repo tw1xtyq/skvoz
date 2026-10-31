@@ -6,7 +6,7 @@ import path from 'path';
 import { runAutonomousBootstrap, type BootstrapState } from './autonomous';
 import { scanForInstallations, verifyInstallation } from './scanner';
 import { isWindowsAdmin, restartAsAdmin } from './admin';
-import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, STARTUP_LAUNCH_ARG, syncLaunchAtStartup } from './autostart';
+import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, STARTUP_LAUNCH_ARG, syncLaunchAtStartup, UPDATED_LAUNCH_ARG } from './autostart';
 import {
   addUserListEntries,
   readUserLists,
@@ -203,8 +203,12 @@ function initTgwsProxy(): void {
     if (level !== 'info') sendToolOutput(`[TG] ${message}`, level);
   });
   tgwsProxy.onStateChange(() => void refreshTrayMenu());
-  if (tgwsProxy.getConfig().autostart) {
-    tgwsProxy.start().catch((error: unknown) => {
+  const tgConfig = tgwsProxy.getConfig();
+  // После обновления поднимаем прокси, если он работал до перезапуска
+  const resumeAfterUpdate = process.argv.includes(UPDATED_LAUNCH_ARG) && tgConfig.enabled;
+  if (tgConfig.enabled) void tgwsProxy.setConfig({ enabled: false }).catch(() => undefined);
+  if (tgConfig.autostart || resumeAfterUpdate) {
+    tgwsProxy.startWithRetry().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       sendToolOutput(`[TG] Автозапуск прокси не удался: ${message}`, 'error');
       notify('Telegram proxy не запустился', message);
@@ -419,6 +423,8 @@ async function autoUpdateZapret(): Promise<void> {
   if (!root || !isValidZapretPath(root)) return;
 
   zapretUpdateRunning = true;
+  let stoppedForUpdate = false;
+  let bypassRestored = false;
   try {
     const info = await checkForUpdates(root);
     if (info.upToDate || !info.latest) return;
@@ -438,6 +444,7 @@ async function autoUpdateZapret(): Promise<void> {
     sendToolOutput(`Найден zapret ${info.latest} (сейчас ${info.current ?? '?'}) — обновляю...`, 'info');
     if (wasRunning) {
       markBypassExpectedRunning(false);
+      stoppedForUpdate = true;
       await stopBypass((line) => sendToolOutput(line.text, line.level));
       await delay(900);
     }
@@ -454,6 +461,7 @@ async function autoUpdateZapret(): Promise<void> {
       if (strategy) {
         await startBypass(result.installPath, strategy, (line) => sendToolOutput(line.text, line.level));
         markBypassExpectedRunning(true);
+        bypassRestored = true;
       }
     }
 
@@ -472,6 +480,21 @@ async function autoUpdateZapret(): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     sendToolOutput(`Автообновление zapret не удалось: ${message}`, 'warn');
+    // Обход остановили ради обновления — без него пользователь не должен остаться
+    if (stoppedForUpdate && !bypassRestored) {
+      const fallbackRoot = isValidZapretPath(config.zapretPath) ? config.zapretPath : root;
+      const strategy = config.selectedStrategy;
+      if (strategy) {
+        try {
+          await startBypass(fallbackRoot, strategy, (line) => sendToolOutput(line.text, line.level));
+          markBypassExpectedRunning(true);
+          sendToolOutput('Обход снова запущен на прежней версии zapret', 'success');
+        } catch (restartError) {
+          const text = restartError instanceof Error ? restartError.message : String(restartError);
+          notify('Обход остановлен', `Обновление zapret не удалось, и обход не перезапустился: ${text}`);
+        }
+      }
+    }
   } finally {
     zapretUpdateRunning = false;
     void refreshTrayMenu(true);
@@ -1625,6 +1648,8 @@ function registerIpc(): void {
     }
     const update = pendingAppUpdate;
     pendingAppUpdate = null;
+    // Запоминаем, работал ли прокси, чтобы поднять его после перезапуска
+    await tgwsProxy.setConfig({ enabled: tgwsProxy.isRunning() }).catch(() => undefined);
     scheduleAppUpdateApply(update);
     setTimeout(() => quitApp(), 600);
     return { ok: true, version: update.version };

@@ -3949,3 +3949,73 @@ body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; 
 .about-link:hover { border-color: var(--line-strong); background: var(--surface-hover); transform: translateY(-1px); }
 .about-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #appVersionLine { font-variant-numeric: tabular-nums; }
+
+/* Иконки карточек — те же линейные SVG, что в меню */
+.card-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.card-icon {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(143, 125, 255, 0.22);
+}
+
+/* Внешняя ссылка: стрелка без эмодзи-шрифта */
+.about-link strong::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 7px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  color: var(--dim);
+  vertical-align: 2px;
+  transition: transform 0.25s var(--ease), color 0.25s var(--ease);
+}
+.about-link:hover strong::after { color: var(--accent); transform: translate(2px, -2px); }
+
+/* Инструменты: вся ячейка — кнопка, без коробки в коробке */
+.tool-cell {
+  position: relative;
+  gap: 3px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease), transform 0.25s var(--ease);
+}
+.tool-cell .btn,
+.tool-cell .btn.btn-soft,
+.tool-cell .btn.btn-danger {
+  justify-content: flex-start;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 0.84rem;
+  text-align: left;
+  transform: none;
+}
+.tool-cell .btn::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.tool-cell .btn:focus-visible { outline: none; }
+.tool-cell:has(.btn:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tool-cell:hover:not(:has(.btn:disabled)) { border-color: var(--line-strong); background: var(--surface-hover); transform: translateY(-1px); }
+.tool-cell:has(.btn:disabled) { cursor: default; opacity: 0.55; }
+.tool-cell .tool-hint { margin: 0; }
+.tool-cell-danger .btn { color: var(--btn-danger-fg); }
+.tool-cell-danger:hover:not(:has(.btn:disabled)) { border-color: var(--btn-danger-border); background: var(--btn-danger-bg); }
+.about-link strong::after {
+  width: 11px;
+  height: 11px;
+  border: 0;
+  background: currentColor;
+  vertical-align: -1px;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17 17 7M8 7h9v9'/%3E%3C/svg%3E") center / contain no-repeat;
+}

@@ -108,8 +108,13 @@ export class TgwsProxyManager {
   }
 
   async setConfig(updates: Partial<TgwsProxyConfig>): Promise<void> {
-    if (this.server) {
-      throw new Error('Остановите прокси перед изменением настроек');
+    // Автозапуск и флаг восстановления можно менять на ходу, сетевые параметры — только у остановленного
+    const changesNetwork =
+      (updates.port !== undefined && Number(updates.port) !== this.config.port) ||
+      (updates.host !== undefined && (updates.host.trim() || '127.0.0.1') !== this.config.host) ||
+      (updates.secretHex !== undefined && updates.secretHex !== this.config.secretHex);
+    if (this.server && changesNetwork) {
+      throw new Error('Остановите прокси перед изменением адреса, порта или секрета');
     }
     if (updates.port !== undefined) {
       const p = Number(updates.port);
@@ -153,6 +158,24 @@ export class TgwsProxyManager {
     this.server = null;
     this.log('info', 'Прокси остановлен');
     this.emitState();
+  }
+
+  /** Запуск с повторами: после перезагрузки или обновления порт может освободиться не сразу. */
+  async startWithRetry(attempts = 4, delayMs = 3_000): Promise<void> {
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await this.start();
+        return;
+      } catch (error) {
+        lastError = error;
+        if (this.server) {
+          await this.stop();
+        }
+        if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
   getStats(): TgwsServerStats {
