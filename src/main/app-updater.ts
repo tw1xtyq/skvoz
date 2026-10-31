@@ -145,6 +145,7 @@ function pickReleaseAsset(
 export async function fetchLatestAppRelease(kind = preferredUpdateKind()): Promise<AppReleaseInfo> {
   const response = await fetch(`https://api.github.com/repos/${APP_GITHUB_REPO}/releases/latest`, {
     headers: { 'User-Agent': 'zapret-app', Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {

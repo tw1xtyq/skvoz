@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { net } from 'electron';
 import { probeTgwsProxy } from './tgws/selftest';
 import type { TgwsProxyConfig } from './tgws-proxy';
 
@@ -43,7 +44,7 @@ function curlProbe(url: string): Promise<{ ok: boolean; ms: number }> {
   return new Promise((resolve) => {
     const child = spawn(
       'curl.exe',
-      ['-I', '-s', '-o', 'NUL', '--connect-timeout', '5', '-m', '8', '-w', '%{http_code} %{time_total}', url],
+      ['-I', '-s', '--ssl-no-revoke', '-o', 'NUL', '--connect-timeout', '5', '-m', '8', '-w', '%{http_code} %{time_total}', url],
       { windowsHide: true }
     );
     let out = '';
@@ -57,13 +58,19 @@ function curlProbe(url: string): Promise<{ ok: boolean; ms: number }> {
   });
 }
 
+/** Одна повторная попытка: разовые сбои сети не должны выглядеть как блокировка. */
+async function probeWithRetry(url: string): Promise<{ ok: boolean; ms: number }> {
+  const first = await curlProbe(url);
+  return first.ok ? first : curlProbe(url);
+}
+
 function summarize(oks: boolean[]): AccessStatus {
   if (oks.every(Boolean)) return 'ok';
   return oks.some(Boolean) ? 'partial' : 'fail';
 }
 
 async function checkHttpService(service: (typeof SERVICES)[number]): Promise<AccessResult> {
-  const results = await Promise.all(service.endpoints.map((endpoint) => curlProbe(endpoint.url)));
+  const results = await Promise.all(service.endpoints.map((endpoint) => probeWithRetry(endpoint.url)));
   const status = summarize(results.map((r) => r.ok));
   const okMs = results.filter((r) => r.ok).map((r) => r.ms);
   const failed = service.endpoints.filter((_, i) => !results[i].ok).map((e) => e.label);
@@ -88,7 +95,7 @@ async function checkTelegram(proxy: { running: boolean; config: TgwsProxyConfig 
       detail: probe.ok ? 'через прокси работает' : `прокси: ${probe.error ?? 'ошибка'}`,
     };
   }
-  const direct = await curlProbe('https://web.telegram.org');
+  const direct = await probeWithRetry('https://web.telegram.org');
   return {
     id: 'telegram',
     name: 'Telegram',
@@ -99,5 +106,10 @@ async function checkTelegram(proxy: { running: boolean; config: TgwsProxyConfig 
 }
 
 export async function checkAccess(proxy: { running: boolean; config: TgwsProxyConfig }): Promise<AccessResult[]> {
+  if (!net.isOnline()) {
+    return [...SERVICES.map((s) => ({ id: s.id, name: s.name })), { id: 'telegram' as const, name: 'Telegram' }].map(
+      (s) => ({ ...s, status: 'fail' as const, ms: null, detail: 'нет подключения к интернету' })
+    );
+  }
   return Promise.all([...SERVICES.map(checkHttpService), checkTelegram(proxy)]);
 }

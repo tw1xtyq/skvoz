@@ -17,7 +17,7 @@ function curlOk(url: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const child = spawn(
       'curl.exe',
-      ['-I', '-s', '-m', String(Math.max(2, Math.ceil(timeoutMs / 1000))), '-o', 'NUL', '-w', '%{http_code}', url],
+      ['-I', '-s', '--ssl-no-revoke', '-m', String(Math.max(2, Math.ceil(timeoutMs / 1000))), '-o', 'NUL', '-w', '%{http_code}', url],
       { windowsHide: true, shell: false }
     );
 

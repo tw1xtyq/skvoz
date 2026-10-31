@@ -1178,12 +1178,38 @@ function notifyAppUpdateIfNeeded(info: AppUpdateStatus): void {
   mainWindow?.webContents.send('app-update-available', info);
 }
 
+const APP_UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
+const APP_UPDATE_RETRY_MS = 15 * 60_000;
+let appUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+let appUpdateNotifiedVersion: string | null = null;
+
+/** Проверка при запуске, затем раз в 6 часов; при сбое сети — повтор через 15 минут. */
 function scheduleAppUpdateCheck(delayMs = 3500): void {
-  setTimeout(() => {
+  if (appUpdateTimer) clearTimeout(appUpdateTimer);
+  appUpdateTimer = setTimeout(() => {
+    appUpdateTimer = null;
     void checkAppUpdate()
-      .then(notifyAppUpdateIfNeeded)
-      .catch(() => undefined);
+      .then((info) => {
+        notifyAppUpdateIfNeeded(info);
+        notifyAppUpdateInTray(info);
+        scheduleAppUpdateCheck(info.checkFailed ? APP_UPDATE_RETRY_MS : APP_UPDATE_INTERVAL_MS);
+      })
+      .catch(() => scheduleAppUpdateCheck(APP_UPDATE_RETRY_MS));
   }, delayMs);
+}
+
+/** Окно свёрнуто в трей — показываем системное уведомление, один раз на версию. */
+function notifyAppUpdateInTray(info: AppUpdateStatus): void {
+  if (!shouldNotifyAppUpdate(info) || !info.latest) return;
+  if (mainWindow?.isVisible() || appUpdateNotifiedVersion === info.latest) return;
+  if (!Notification.isSupported()) return;
+  appUpdateNotifiedVersion = info.latest;
+  const notification = new Notification({
+    title: 'Доступно обновление Skvoz',
+    body: `Версия ${info.latest} — нажмите, чтобы открыть`,
+  });
+  notification.on('click', () => focusMainWindow());
+  notification.show();
 }
 
 function registerIpc(): void {

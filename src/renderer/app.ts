@@ -2105,7 +2105,7 @@ async function loadTgwsState(): Promise<void> {
       : 'Telegram proxy остановлен';
     els.tgDeckMeta.textContent = tgwsRunning
       ? 'Подключение MTProto→WebSocket через локальный прокси'
-      : 'Нажмите «Запустить» для запуска MTProto→WebSocket прокси';
+      : 'Включается на Главной или из трея';
     els.tgStatusDot.classList.toggle('is-live', tgwsRunning);
 
     // Stats
@@ -2119,7 +2119,6 @@ async function loadTgwsState(): Promise<void> {
     els.btnTgToggle.textContent = tgwsRunning ? 'Остановить' : 'Запустить';
     els.btnTgToggle.classList.toggle('btn-glow', !tgwsRunning);
     els.btnTgToggle.classList.toggle('btn-soft', tgwsRunning);
-    els.btnTgDisconnect.classList.toggle('hidden', !tgwsRunning);
     els.quickTgCard.classList.toggle('is-live', tgwsRunning);
     els.quickTgDot.classList.toggle('is-live', tgwsRunning);
     els.quickTgText.textContent = tgwsRunning
