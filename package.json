@@ -1,7 +1,7 @@
 {
   "name": "zapret-app",
-  "version": "1.0.8",
-  "description": "Простой пульт для запуска и управления zapret",
+  "version": "1.8.3",
+  "description": "Skvoz — пульт для zapret и Telegram-прокси",
   "main": "dist/main/main.js",
   "author": "ProtheticGlitch",
   "license": "MIT",
@@ -11,8 +11,9 @@
   },
   "scripts": {
     "clean": "node scripts/clean.js",
-    "build": "tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
+    "build": "node scripts/clean.js dist && tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
     "icons": "node scripts/generate-icon.js",
+    "logo": "electron scripts/render-logo.js",
     "start": "scripts\\start-win.cmd",
     "dev": "tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/run-dev.js",
     "dev:admin": "scripts\\start-win.cmd",
@@ -22,7 +23,7 @@
   },
   "build": {
     "appId": "com.protheticglitch.zapret-app",
-    "productName": "Zapret App",
+    "productName": "Skvoz",
     "copyright": "Copyright © 2026 ProtheticGlitch",
     "afterPack": "scripts/patch-win-exe.js",
     "directories": {
@@ -60,13 +61,13 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Zapret App",
+      "shortcutName": "Skvoz",
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
-      "artifactName": "Zapret-App-Setup-${version}.${ext}"
+      "artifactName": "Skvoz-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "Zapret-App-${version}-Portable.${ext}"
+      "artifactName": "Skvoz-${version}-Portable.${ext}"
     }
   },
   "devDependencies": {

@@ -3,12 +3,14 @@ import {
   clearJournal,
   copyJournal,
   focusJournal,
+  isJournalCollapsed,
+  restoreJournalCollapsed,
+  setJournalCollapsed,
   setJournalStatus,
   setJournalTitle,
   type JournalLevel,
 } from './journal.js';
 import { confirmModal, formatUserError, initUi, showErrorModal, showInfoModal, toast } from './ui.js';
-import { applyTheme, getAppliedTheme, type AppTheme } from './theme.js';
 import { enhanceSelect, type CustomSelectHandle } from './custom-select.js';
 import {
   initLoading,
@@ -43,32 +45,74 @@ interface AppUpdateInfo {
   releaseNotes: string | null;
 }
 
+interface TgwsProxyConfig {
+  enabled: boolean;
+  port: number;
+  host: string;
+  secretHex: string;
+  autostart: boolean;
+}
+
+interface TgwsProxyStats {
+  total: number;
+  active: number;
+  ws: number;
+  tcp: number;
+  bad: number;
+}
+
+interface TgwsProxyState {
+  running: boolean;
+  config: TgwsProxyConfig;
+  stats: TgwsProxyStats;
+  proxyLink: string | null;
+}
+
+interface AccessResult {
+  id: 'discord' | 'youtube' | 'telegram';
+  name: string;
+  status: 'ok' | 'partial' | 'fail';
+  ms: number | null;
+  detail: string;
+}
+
 interface ZapretApi {
+  tgwsGetConfig(): Promise<TgwsProxyConfig>;
+  tgwsSetConfig(updates: Partial<TgwsProxyConfig>): Promise<{ ok: boolean }>;
+  tgwsStart(): Promise<{ ok: boolean }>;
+  tgwsStop(): Promise<{ ok: boolean }>;
+  tgwsStatus(): Promise<TgwsProxyState>;
+  tgwsProxyLink(): Promise<string | null>;
+  checkAccess(): Promise<AccessResult[]>;
+  openExternal(url: string): Promise<{ ok: boolean }>;
   getConfig(): Promise<{
     zapretPath: string;
     selectedStrategy: string | null;
-    theme?: AppTheme;
     launchAtStartup?: boolean;
     autoStartBypass?: boolean;
     autoPickBestStrategy?: boolean;
+    minimizeToTray?: boolean;
+    autoUpdateZapret?: boolean;
     skipAutoBootstrap?: boolean;
   }>;
   getDashboardState(options?: { light?: boolean }): Promise<{
     config: {
       zapretPath: string;
       selectedStrategy: string | null;
-      theme?: AppTheme;
       launchAtStartup?: boolean;
       autoStartBypass?: boolean;
       autoPickBestStrategy?: boolean;
+      minimizeToTray?: boolean;
+      autoUpdateZapret?: boolean;
       skipAutoBootstrap?: boolean;
     };
     status: StatusPayload;
   }>;
-  setTheme(theme: AppTheme): Promise<{ theme: AppTheme }>;
   setLaunchAtStartup(enabled: boolean): Promise<{ launchAtStartup: boolean }>;
   setAutoStartBypass(enabled: boolean): Promise<{ autoStartBypass: boolean; launchAtStartup?: boolean }>;
   setAutoPickBestStrategy(enabled: boolean): Promise<{ autoPickBestStrategy: boolean }>;
+  setMinimizeToTray(enabled: boolean): Promise<{ minimizeToTray: boolean }>;
+  setAutoUpdateZapret(enabled: boolean): Promise<{ autoUpdateZapret: boolean }>;
   getBootstrapState(): Promise<BootstrapState | null>;
   rescanZapret(): Promise<BootstrapState | null>;
   getStatus(): Promise<StatusPayload>;
@@ -79,6 +123,10 @@ interface ZapretApi {
   fullRemoveZapret(): Promise<{ ok: boolean; removedPaths: string[] }>;
   setGameFilter(mode: string): Promise<{ ok: boolean }>;
   toggleIpset(): Promise<{ ok: boolean; ipset: string }>;
+  setIpsetMode(mode: 'loaded' | 'any' | 'none'): Promise<{ ok: boolean; ipset: 'loaded' | 'any' | 'none' }>;
+  updateIpsetList(): Promise<{ ok: boolean }>;
+  updateHostsFile(): Promise<{ ok: boolean }>;
+  removeZapretServices(): Promise<{ ok: boolean }>;
   getUserLists(): Promise<{ lists: Record<UserListKind, string> }>;
   saveUserList(kind: UserListKind, content: string): Promise<{ ok: boolean; lists: Record<UserListKind, string> }>;
   addUserListEntries(
@@ -89,13 +137,15 @@ interface ZapretApi {
   runDiagnostics(): Promise<{ ok: boolean }>;
   runTests(mode?: 'current' | 'all'): Promise<{ ok: boolean }>;
   getAutoPickPending(): Promise<{ pending: boolean }>;
-  runPickBestStrategy(): Promise<{
+  runPickBestStrategy(options?: { quick?: boolean }): Promise<{
     cancelled: boolean;
     strategy: string | null;
     score: number;
     okChecks: number;
     totalChecks: number;
+    partialBest: string | null;
   }>;
+  getLastTestResults(): Promise<(TestResultPayload & { at: string }) | null>;
   cancelPickBestStrategy(): Promise<{ ok: boolean }>;
   completePostBootstrap(): Promise<{ ok: boolean }>;
   getProcessStatus(): Promise<{ ok: boolean }>;
@@ -159,12 +209,15 @@ interface StrategyRanking {
   maxScore: number;
   okChecks: number;
   totalChecks: number;
+  failed?: string[];
 }
 
 interface TestResultPayload {
   rankings: StrategyRanking[];
   best: StrategyRanking | null;
   targetCount: number;
+  cancelled?: boolean;
+  quick?: boolean;
 }
 
 type UserListKind = 'general' | 'exclude-domains' | 'exclude-ips';
@@ -181,6 +234,7 @@ const ACTION_BUTTON_IDS = [
   'btnToggle',
   'btnDiagnostics',
   'btnFindBest',
+  'btnFullCheck',
   'btnTests',
   'btnProcessStatus',
   'btnCheckUpdates',
@@ -240,10 +294,18 @@ const els = {
   configMeta: document.getElementById('configMeta')!,
   gameFilterSelect: document.getElementById('gameFilterSelect') as HTMLSelectElement,
   ipsetToggle: document.getElementById('ipsetToggle') as HTMLInputElement,
+  ipsetModeSelect: document.getElementById('ipsetModeSelect') as HTMLSelectElement,
+  btnUpdateIpset: document.getElementById('btnUpdateIpset') as HTMLButtonElement,
+  btnUpdateHosts: document.getElementById('btnUpdateHosts') as HTMLButtonElement,
+  btnRemoveServices: document.getElementById('btnRemoveServices') as HTMLButtonElement,
   checkUpdatesToggle: document.getElementById('checkUpdatesToggle') as HTMLInputElement,
   launchAtStartupToggle: document.getElementById('launchAtStartupToggle') as HTMLInputElement,
   autoStartBypassToggle: document.getElementById('autoStartBypassToggle') as HTMLInputElement,
   autoPickStrategyToggle: document.getElementById('autoPickStrategyToggle') as HTMLInputElement,
+  minimizeToTrayToggle: document.getElementById('minimizeToTrayToggle') as HTMLInputElement,
+  autoUpdateZapretToggle: document.getElementById('autoUpdateZapretToggle') as HTMLInputElement,
+  quickBypassMeta: document.getElementById('quickBypassMeta')!,
+  quickTgMeta: document.getElementById('quickTgMeta')!,
   userListKind: document.getElementById('userListKind') as HTMLSelectElement,
   userListHint: document.getElementById('userListHint')!,
   userListEditor: document.getElementById('userListEditor') as HTMLTextAreaElement,
@@ -253,6 +315,9 @@ const els = {
   btnDiagnostics: document.getElementById('btnDiagnostics') as HTMLButtonElement,
   btnFindBest: document.getElementById('btnFindBest') as HTMLButtonElement,
   btnTests: document.getElementById('btnTests') as HTMLButtonElement,
+  btnFullCheck: document.getElementById('btnFullCheck') as HTMLButtonElement,
+  strategyPickBest: document.getElementById('strategyPickBest')!,
+  strategyPickList: document.getElementById('strategyPickList')!,
   testProgressWrap: document.getElementById('testProgressWrap')!,
   testProgressBar: document.getElementById('testProgressBar')!,
   testProgressText: document.getElementById('testProgressText')!,
@@ -265,7 +330,6 @@ const els = {
   btnCopyLog: document.getElementById('btnCopyLog') as HTMLButtonElement,
   log: document.getElementById('log')!,
   logPanel: document.getElementById('logPanel')!,
-  functionalPanel: document.getElementById('functionalPanel')!,
   pathActionsGroup: document.getElementById('pathActionsGroup')!,
   pathLockHint: document.getElementById('pathLockHint')!,
   runtimeSettingsGroup: document.getElementById('runtimeSettingsGroup')!,
@@ -274,7 +338,6 @@ const els = {
   configTestsGroup: document.getElementById('configTestsGroup')!,
   configLockHint: document.getElementById('configLockHint')!,
   fullRemoveGroup: document.getElementById('fullRemoveGroup')!,
-  themeToggle: document.getElementById('themeToggle') as HTMLButtonElement,
   strategyPickOverlay: document.getElementById('strategyPickOverlay')!,
   strategyPickTitle: document.getElementById('strategyPickTitle')!,
   strategyPickHint: document.getElementById('strategyPickHint')!,
@@ -283,6 +346,39 @@ const els = {
   strategyPickProgressBar: document.getElementById('strategyPickProgressBar') as HTMLElement,
   strategyPickSpinner: document.getElementById('strategyPickSpinner')!,
   btnCancelStrategyPick: document.getElementById('btnCancelStrategyPick') as HTMLButtonElement,
+  pageTitle: document.getElementById('pageTitle')!,
+  pageSubtitle: document.getElementById('pageSubtitle')!,
+  quickBypassCard: document.getElementById('quickBypassCard')!,
+  quickBypassDot: document.getElementById('quickBypassDot')!,
+  quickBypassText: document.getElementById('quickBypassText')!,
+  btnQuickBypass: document.getElementById('btnQuickBypass') as HTMLButtonElement,
+  quickTgCard: document.getElementById('quickTgCard')!,
+  quickTgDot: document.getElementById('quickTgDot')!,
+  quickTgText: document.getElementById('quickTgText')!,
+  btnQuickTg: document.getElementById('btnQuickTg') as HTMLButtonElement,
+  tgDeck: document.getElementById('tgDeck')!,
+  tgStatusDot: document.getElementById('tgStatusDot')!,
+  tgDeckTitle: document.getElementById('tgDeckTitle')!,
+  tgDeckMeta: document.getElementById('tgDeckMeta')!,
+  tgStatTotal: document.getElementById('tgStatTotal')!,
+  tgStatActive: document.getElementById('tgStatActive')!,
+  tgStatWs: document.getElementById('tgStatWs')!,
+  tgStatTcp: document.getElementById('tgStatTcp')!,
+  tgStatBad: document.getElementById('tgStatBad')!,
+  btnTgToggle: document.getElementById('btnTgToggle') as HTMLButtonElement,
+  btnTgDisconnect: document.getElementById('btnTgDisconnect') as HTMLButtonElement,
+  tgPort: document.getElementById('tgPort') as HTMLInputElement,
+  tgHost: document.getElementById('tgHost') as HTMLInputElement,
+  tgSecret: document.getElementById('tgSecret') as HTMLInputElement,
+  btnTgGenSecret: document.getElementById('btnTgGenSecret') as HTMLButtonElement,
+  btnTgCopyLink: document.getElementById('btnTgCopyLink') as HTMLButtonElement,
+  btnTgOpenTg: document.getElementById('btnTgOpenTg') as HTMLButtonElement,
+  tgProxyLink: document.getElementById('tgProxyLink') as HTMLInputElement,
+  tgAutostart: document.getElementById('tgAutostart') as HTMLInputElement,
+  btnTgSaveConfig: document.getElementById('btnTgSaveConfig') as HTMLButtonElement,
+  btnCheckAccess: document.getElementById('btnCheckAccess') as HTMLButtonElement,
+  accessMeta: document.getElementById('accessMeta')!,
+  accessGrid: document.getElementById('accessGrid')!,
 };
 
 let currentStatus: StatusPayload | null = null;
@@ -291,11 +387,14 @@ let strategyPickActive = false;
 let isAdminUser = false;
 let lastTestBest: StrategyRanking | null = null;
 let testQuietMode = false;
+let pickTimings: number[] = [];
+let pickBestSoFar: { strategy: string; pct: number } | null = null;
 let bootstrapKickStarted = false;
 let lastBootstrapLogKey = '';
 let autoStartBlockedNotified = false;
 let strategyCustomSelect: CustomSelectHandle | null = null;
 let gameFilterCustomSelect: CustomSelectHandle | null = null;
+let ipsetCustomSelect: CustomSelectHandle | null = null;
 let userListCustomSelect: CustomSelectHandle | null = null;
 let userListsCache: Record<UserListKind, string> | null = null;
 let lastStatusRenderKey = '';
@@ -309,6 +408,12 @@ let statusRefreshInFlight = false;
 let statusRefreshQueued = false;
 let pendingAppUpdateInfo: AppUpdateInfo | null = null;
 let appUpdateDownloadReady = false;
+
+let tgwsConfig: TgwsProxyConfig | null = null;
+let tgwsRunning = false;
+let tgwsStats: TgwsProxyStats = { total: 0, active: 0, ws: 0, tcp: 0, bad: 0 };
+let tgwsPollTimer: number | null = null;
+let tgConfigDirty = false;
 
 async function refreshAdminState(): Promise<void> {
   try {
@@ -342,24 +447,64 @@ function resetTestUi(): void {
   lastTestBest = null;
 }
 
+function formatDuration(ms: number): string {
+  const sec = Math.max(1, Math.round(ms / 1000));
+  if (sec < 60) return `${sec} с`;
+  const min = Math.floor(sec / 60);
+  const rest = sec % 60;
+  return rest ? `${min} мин ${rest} с` : `${min} мин`;
+}
+
 function showTestProgress(current: number, total: number, strategy: string): void {
-  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-  const label = `${current} из ${total} · ${strategy.replace('.bat', '')}`;
+  const done = current - 1;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  let label = `${current} из ${total} · ${strategy.replace('.bat', '')}`;
+  if (pickTimings.length > 0 && total > 1) {
+    const avg = pickTimings.reduce((sum, ms) => sum + ms, 0) / pickTimings.length;
+    label += ` · осталось ~${formatDuration(avg * (total - done))}`;
+  }
 
   if (strategyPickActive) {
-    setPickProgress({ visible: true, percent: pct, label });
+    setPickProgress({ visible: true, percent: Math.max(pct, 2), label });
   } else {
-    setInlineTestProgress({ visible: true, percent: pct, label });
+    setInlineTestProgress({ visible: true, percent: Math.max(pct, 2), label });
   }
 
   setJournalStatus(`Проверка ${current} из ${total}`);
 }
 
-function openStrategyPickOverlay(auto: boolean): void {
-  els.strategyPickTitle.textContent = auto ? 'Автоподбор конфига' : 'Подбор лучшего конфига';
-  els.strategyPickHint.textContent = auto
-    ? 'Проверяем все стратегии при первом запуске. Можно отменить — останется конфиг по умолчанию.'
-    : 'Проверяем все .bat. Другие действия недоступны до завершения или отмены.';
+function pctTone(pct: number): 'good' | 'mid' | 'low' {
+  return pct >= 70 ? 'good' : pct >= 40 ? 'mid' : 'low';
+}
+
+function addPickLiveRow(data: { strategy: string; pct: number; failed?: string[] }): void {
+  if (!strategyPickActive) return;
+  const name = data.strategy.replace('.bat', '');
+  const li = document.createElement('li');
+  li.className = `pick-row pick-${pctTone(data.pct)}`;
+  li.innerHTML = `<span class="pick-row-name">${escapeHtml(name)}</span>${renderTestPctBar(data.pct)}`;
+  if (data.failed?.length) li.title = `Не открылось: ${data.failed.join(', ')}`;
+  els.strategyPickList.prepend(li);
+
+  if (!pickBestSoFar || data.pct > pickBestSoFar.pct) {
+    pickBestSoFar = { strategy: data.strategy, pct: data.pct };
+    els.strategyPickBest.classList.remove('hidden');
+    els.strategyPickBest.innerHTML = `<span>Лучший пока</span><strong>${escapeHtml(name)}</strong><em>${data.pct}%</em>`;
+  }
+  els.btnCancelStrategyPick.textContent = 'Остановить и показать результаты';
+}
+
+function openStrategyPickOverlay(auto: boolean, quick: boolean): void {
+  els.strategyPickTitle.textContent = auto ? 'Автоподбор конфига' : quick ? 'Подбор конфига' : 'Проверка всех конфигов';
+  els.strategyPickHint.textContent = quick
+    ? 'Проверяем конфиги по очереди и останавливаемся на первом, который открыл всё.'
+    : 'Проверяем каждый конфиг. Можно остановить в любой момент — проверенные останутся в таблице.';
+  pickTimings = [];
+  pickBestSoFar = null;
+  els.strategyPickList.innerHTML = '';
+  els.strategyPickBest.classList.add('hidden');
+  els.btnCancelStrategyPick.textContent = 'Отменить';
+  els.btnCancelStrategyPick.disabled = false;
   setPickProgress({ visible: true, percent: 0, label: 'Подготовка...' });
   els.strategyPickOverlay.classList.remove('hidden');
   requestAnimationFrame(() => els.strategyPickOverlay.classList.add('is-open'));
@@ -378,25 +523,59 @@ function setStrategyPickActive(active: boolean): void {
   syncCustomSelectsDisabled(currentStatus);
 }
 
-async function runPickBestStrategy(options: { auto?: boolean } = {}): Promise<void> {
+/**
+ * Проверки сами запускают и гасят winws, поэтому работающий обход
+ * останавливаем перед ними и поднимаем обратно после (уже с новым конфигом).
+ */
+async function pauseBypassForTests(): Promise<boolean | null> {
+  if (!currentStatus?.bypass.running) return false;
+  const ok = await confirmModal(
+    'Обход будет перезапущен',
+    'На время проверки обход выключится, интернет через zapret пропадёт на минуту-другую.',
+    'После проверки обход запустится снова — уже с выбранным конфигом.'
+  );
+  if (!ok) return null;
+  log('Останавливаю обход на время проверки...', 'info');
+  await api.stopBypass();
+  return true;
+}
+
+async function resumeBypassAfterTests(): Promise<void> {
+  try {
+    await api.startBypass();
+    log('Обход снова запущен', 'success');
+  } catch (err) {
+    reportFailure(err, 'Не удалось запустить обход');
+  }
+}
+
+async function runPickBestStrategy(options: { auto?: boolean; quick?: boolean } = {}): Promise<void> {
   if (strategyPickActive || busy) return;
+  const quick = options.auto ? true : !!options.quick;
+
+  const paused = options.auto ? false : await pauseBypassForTests();
+  if (paused === null) return;
 
   setBusy(true);
   setStrategyPickActive(true);
-  openStrategyPickOverlay(!!options.auto);
+  openStrategyPickOverlay(!!options.auto, quick);
   resetTestUi();
   testQuietMode = true;
   clearJournal();
-  setJournalTitle(options.auto ? 'Автоподбор конфига' : 'Подбор лучшего конфига');
+  setJournalTitle(options.auto ? 'Автоподбор конфига' : quick ? 'Подбор конфига' : 'Проверка всех конфигов');
   setJournalStatus('Запуск...');
-  focusJournal(true);
 
   try {
-    const result = await api.runPickBestStrategy();
+    const result = await api.runPickBestStrategy({ quick });
     if (result.cancelled) {
-      toast('Подбор конфига отменён', 'info');
-      log('Подбор конфига отменён', 'info');
-      setJournalStatus('Отменено');
+      if (result.partialBest) {
+        toast('Подбор остановлен — выберите конфиг в таблице результатов', 'info');
+        setActiveAppView('bypass');
+      } else {
+        toast('Подбор конфига отменён', 'info');
+      }
+      log('Подбор конфига остановлен', 'info');
+      setJournalStatus('Остановлено');
     } else if (result.strategy) {
       const name = result.strategy.replace('.bat', '');
       const pct =
@@ -407,11 +586,14 @@ async function runPickBestStrategy(options: { auto?: boolean } = {}): Promise<vo
     } else {
       setJournalStatus('Конфиг по умолчанию');
     }
+    if (paused) await resumeBypassAfterTests();
     lastStatusRenderKey = '';
     await refreshStatus();
+    markCurrentInResults();
   } catch (err) {
     reportFailure(err);
     setJournalStatus('Ошибка');
+    if (paused) await resumeBypassAfterTests();
   } finally {
     testQuietMode = false;
     closeStrategyPickOverlay();
@@ -424,6 +606,17 @@ async function runPickBestStrategy(options: { auto?: boolean } = {}): Promise<vo
         /* ignore */
       }
     }
+  }
+}
+
+async function runCurrentStrategyTest(): Promise<void> {
+  if (busy || strategyPickActive) return;
+  const paused = await pauseBypassForTests();
+  if (paused === null) return;
+  await runTool('Тест текущего конфига', () => api.runTests('current'), { isTest: true });
+  if (paused) {
+    await resumeBypassAfterTests();
+    void refreshStatus();
   }
 }
 
@@ -440,43 +633,85 @@ async function maybeStartAutoPick(): Promise<void> {
 }
 
 function renderTestPctBar(pct: number): string {
-  const tone = pct >= 70 ? 'good' : pct >= 40 ? 'mid' : 'low';
-  return `<span class="test-pct"><span class="test-pct-track"><span class="test-pct-fill test-pct-${tone}" style="width:${pct}%"></span></span><span class="test-pct-val">${pct}%</span></span>`;
+  return `<span class="test-pct"><span class="test-pct-track"><span class="test-pct-fill test-pct-${pctTone(pct)}" style="width:${pct}%"></span></span><span class="test-pct-val">${pct}%</span></span>`;
 }
 
-function renderTestResults(payload: TestResultPayload): void {
+function formatTestDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function rankingPct(row: StrategyRanking): number {
+  return row.maxScore > 0 ? Math.round((row.score / row.maxScore) * 100) : 0;
+}
+
+function renderTestResults(payload: TestResultPayload, at?: string): void {
   if (!payload.best) return;
   lastTestBest = payload.best;
   els.testResults.classList.remove('hidden');
 
-  const bestPct = payload.best.maxScore > 0 ? Math.round((payload.best.score / payload.best.maxScore) * 100) : 0;
+  const bestPct = rankingPct(payload.best);
   const bestName = payload.best.strategy.replace('.bat', '');
+  const kind = payload.rankings.length === 1 ? 'Тест конфига' : payload.quick ? 'Быстрый подбор' : 'Полная проверка';
+  const meta = [kind, payload.cancelled ? 'остановлена' : '', at ? formatTestDate(at) : 'только что']
+    .filter(Boolean)
+    .join(' · ');
+  const failedHint = payload.best.failed?.length
+    ? `<span class="test-best-failed">Не открылось: ${escapeHtml(payload.best.failed.join(', '))}</span>`
+    : '';
 
-  let html = `<div class="test-best">
+  let html = `<p class="test-meta">${escapeHtml(meta)}</p>
+  <div class="test-best">
     <div class="test-best-copy">
       <span class="test-best-label">Лучший конфиг</span>
       <strong>${escapeHtml(bestName)}</strong>
-      <span class="test-best-score">${bestPct}% · ${payload.best.okChecks}/${payload.best.totalChecks} OK</span>
+      <span class="test-best-score">${bestPct}% · ${payload.best.okChecks}/${payload.best.totalChecks} проверок</span>
+      ${failedHint}
     </div>
     <button class="btn btn-glow test-apply-btn" type="button" data-strategy="${escapeHtml(payload.best.strategy)}">Применить</button>
   </div>`;
 
-  html += '<p class="test-table-hint">Нажмите на строку, чтобы выбрать другой конфиг</p>';
-  html += '<div class="test-table-wrap"><div class="test-table">';
-  html += '<div class="test-row test-head"><span>#</span><span>Конфиг</span><span>Результат</span></div>';
-
-  payload.rankings.forEach((row, index) => {
-    const pct = row.maxScore > 0 ? Math.round((row.score / row.maxScore) * 100) : 0;
-    const isBest = row.strategy === payload.best?.strategy;
-    html += `<button class="test-row test-row-btn${isBest ? ' test-row-best' : ''}" type="button" data-strategy="${escapeHtml(row.strategy)}">
+  if (payload.rankings.length > 1) {
+    html += '<p class="test-table-hint">Нажмите на строку, чтобы выбрать другой конфиг</p>';
+    html += '<div class="test-table-wrap"><div class="test-table">';
+    html += '<div class="test-row test-head"><span>#</span><span>Конфиг</span><span>Результат</span></div>';
+    payload.rankings.forEach((row, index) => {
+      const isBest = row.strategy === payload.best?.strategy;
+      const failed = row.failed?.length ? ` title="Не открылось: ${escapeHtml(row.failed.join(', '))}"` : '';
+      html += `<button class="test-row test-row-btn${isBest ? ' test-row-best' : ''}" type="button" data-strategy="${escapeHtml(row.strategy)}"${failed}>
       <span>${index + 1}</span>
-      <span>${escapeHtml(row.strategy.replace('.bat', ''))}</span>
-      ${renderTestPctBar(pct)}
+      <span class="test-row-name">${escapeHtml(row.strategy.replace('.bat', ''))}<em class="test-current-badge">текущий</em></span>
+      ${renderTestPctBar(rankingPct(row))}
     </button>`;
-  });
+    });
+    html += '</div></div>';
+  }
 
-  html += '</div></div>';
   els.testResults.innerHTML = html;
+  markCurrentInResults();
+}
+
+/** Отмечает в таблице конфиг, который сейчас выбран. */
+function markCurrentInResults(): void {
+  const current = currentStatus?.selectedStrategy ?? null;
+  els.testResults.querySelectorAll<HTMLElement>('[data-strategy]').forEach((el) => {
+    const isCurrent = el.dataset.strategy === current;
+    el.classList.toggle('is-current', isCurrent);
+    if (el.classList.contains('test-apply-btn')) {
+      (el as HTMLButtonElement).disabled = isCurrent;
+      el.textContent = isCurrent ? 'Используется' : 'Применить';
+    }
+  });
+}
+
+async function loadLastTestResults(): Promise<void> {
+  try {
+    const last = await api.getLastTestResults();
+    if (last && els.testResults.classList.contains('hidden')) renderTestResults(last, last.at);
+  } catch {
+    /* нет сохранённых результатов */
+  }
 }
 
 async function applyStrategy(name: string): Promise<void> {
@@ -512,7 +747,6 @@ function setRuntimeLock(locked: boolean): void {
     els.pathActionsGroup,
     els.runtimeSettingsGroup,
     els.configStrategyGroup,
-    els.configTestsGroup,
     els.fullRemoveGroup,
   ];
   for (const group of groups) {
@@ -541,7 +775,7 @@ function updateControls(status: StatusPayload | null): void {
     'btnDownloadInline',
   ]);
 
-  const configButtons = new Set(['btnFindBest', 'btnTests']);
+  const configButtons = new Set(['btnFindBest', 'btnFullCheck', 'btnTests']);
 
   for (const id of ACTION_BUTTON_IDS) {
     const el = document.getElementById(id);
@@ -559,7 +793,7 @@ function updateControls(status: StatusPayload | null): void {
     }
 
     if (configButtons.has(id)) {
-      el.disabled = pickLocked || busy || !hasPath || runningLocked;
+      el.disabled = pickLocked || busy || !hasPath || !isAdminUser;
       continue;
     }
 
@@ -584,6 +818,10 @@ function updateControls(status: StatusPayload | null): void {
   els.strategySelect.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.gameFilterSelect.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.ipsetToggle.disabled = pickLocked || busy || !hasPath || runningLocked;
+  els.ipsetModeSelect.disabled = pickLocked || busy || !hasPath || runningLocked;
+  els.btnUpdateIpset.disabled = pickLocked || busy || !hasPath || runningLocked;
+  els.btnUpdateHosts.disabled = pickLocked || busy || !hasPath;
+  els.btnRemoveServices.disabled = pickLocked || busy || !isAdminUser;
   els.userListKind.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.userListEditor.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.userListQuickAdd.disabled = pickLocked || busy || !hasPath || runningLocked;
@@ -593,10 +831,25 @@ function updateControls(status: StatusPayload | null): void {
   els.launchAtStartupToggle.disabled = pickLocked || busy;
   els.autoStartBypassToggle.disabled = pickLocked || busy;
   els.autoPickStrategyToggle.disabled = pickLocked || busy;
-  els.themeToggle.disabled = pickLocked || busy;
+  els.minimizeToTrayToggle.disabled = pickLocked || busy;
+  els.autoUpdateZapretToggle.disabled = pickLocked || busy;
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
+  els.btnQuickBypass.disabled = pickLocked || busy || (running ? !hasPath : !canStart);
+  els.btnQuickBypass.textContent = running ? 'Остановить' : 'Включить';
+  els.btnQuickTg.disabled = pickLocked || busy;
   updateAdminHint(status);
+}
+
+function updateQuickBypass(status: StatusPayload | null): void {
+  const running = !!status?.bypass.running;
+  const ready = !!status?.pathsValid;
+  els.quickBypassCard.classList.toggle('is-live', running);
+  els.quickBypassCard.classList.toggle('is-unavailable', !ready);
+  els.quickBypassDot.classList.toggle('is-live', running);
+  els.quickBypassText.textContent = running ? 'Защита включена' : ready ? 'Защита выключена' : 'Zapret не найден';
+  const strategy = status?.selectedStrategy?.replace(/\.bat$/i, '');
+  els.quickBypassMeta.textContent = ready && strategy ? `Конфиг: ${strategy}` : '';
 }
 
 function setBusy(value: boolean): void {
@@ -612,6 +865,7 @@ function syncCustomSelectsDisabled(status: StatusPayload | null): void {
   const disabled = strategyPickActive || busy || !hasPath || runningLocked;
   strategyCustomSelect?.setDisabled(disabled);
   gameFilterCustomSelect?.setDisabled(disabled);
+  ipsetCustomSelect?.setDisabled(disabled);
   userListCustomSelect?.setDisabled(disabled);
 }
 
@@ -730,9 +984,9 @@ function showAppUpdateBanner(info: AppUpdateInfo | null): void {
 async function refreshAppVersionLine(): Promise<void> {
   try {
     const version = await api.getAppVersion();
-    els.appVersionLine.textContent = `Zapret App v${version}`;
+    els.appVersionLine.textContent = `Skvoz v${version}`;
   } catch {
-    els.appVersionLine.textContent = 'Zapret App';
+    els.appVersionLine.textContent = 'Skvoz';
   }
 }
 
@@ -744,14 +998,14 @@ async function installAppUpdate(): Promise<void> {
   appUpdateDownloadReady = false;
   setGlobalLoad({
     visible: true,
-    title: 'Обновление Zapret App',
+    title: 'Обновление Skvoz',
     message: `Скачиваем версию ${latest}...`,
     indeterminate: true,
     stage: 'download',
   });
 
   try {
-    log(`Загрузка Zapret App ${latest}...`, 'info');
+    log(`Загрузка Skvoz ${latest}...`, 'info');
     await api.downloadAppUpdate();
     appUpdateDownloadReady = true;
     setGlobalLoad({
@@ -764,7 +1018,7 @@ async function installAppUpdate(): Promise<void> {
 
     const ok = await confirmModal(
       'Установить обновление',
-      `Zapret App ${latest} скачан.\n\nПриложение перезапустится и установит обновление. Продолжить?`
+      `Skvoz ${latest} скачан.\n\nПриложение перезапустится и установит обновление. Продолжить?`
     );
     if (!ok) {
       toast('Обновление скачано. Нажмите «Обновить» ещё раз для установки.', 'info');
@@ -927,11 +1181,11 @@ function updateLayout(status: StatusPayload): void {
 
   els.emptyState.classList.toggle('hidden', !missing);
   els.mainPanel.classList.toggle('hidden', missing);
-  els.functionalPanel.classList.toggle('hidden', missing);
+  document.body.classList.toggle('zapret-missing', missing);
 
   if (changed) {
     if (missing) playPanelEnter(els.emptyState);
-    else playPanelEnter(els.mainPanel, els.functionalPanel);
+    else playPanelEnter(els.mainPanel);
   }
 }
 
@@ -989,7 +1243,11 @@ function handleToolOutput(line: { text: string; level: string }): void {
         pct: number;
         okChecks: number;
         totalChecks: number;
+        failed?: string[];
+        ms?: number;
       };
+      if (data.ms) pickTimings.push(data.ms);
+      addPickLiveRow(data);
       const level: JournalLevel = data.pct >= 50 ? 'success' : 'warn';
       appendJournalLine(
         `${data.strategy.replace('.bat', '')} — ${data.pct}% (${data.okChecks}/${data.totalChecks} OK)`,
@@ -1073,6 +1331,7 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   lastStatusRenderKey = renderKey;
 
   updateLayout(status);
+  updateQuickBypass(status);
   if (skipHeavyUi) {
     updateControls(status);
     syncCustomSelectsDisabled(status);
@@ -1140,6 +1399,10 @@ function renderStatus(status: StatusPayload, configPath: string): void {
     els.gameFilterSelect.value = status.settings.gameFilter;
     gameFilterCustomSelect?.rebuild();
     els.ipsetToggle.checked = status.settings.ipset === 'loaded';
+    els.ipsetModeSelect.value = ['loaded', 'any', 'none'].includes(status.settings.ipset)
+      ? status.settings.ipset
+      : 'none';
+    ipsetCustomSelect?.rebuild();
     els.checkUpdatesToggle.checked = status.settings.checkUpdates;
   }
 
@@ -1159,6 +1422,8 @@ async function refreshStatus(full = true): Promise<void> {
     els.launchAtStartupToggle.checked = !!config.launchAtStartup;
     els.autoStartBypassToggle.checked = !!config.autoStartBypass;
     els.autoPickStrategyToggle.checked = config.autoPickBestStrategy !== false;
+    els.minimizeToTrayToggle.checked = config.minimizeToTray !== false;
+    els.autoUpdateZapretToggle.checked = config.autoUpdateZapret !== false;
     showOfficialWarning(status);
     if (full) {
       void loadUserLists();
@@ -1193,7 +1458,10 @@ function setAppWindowVisible(visible: boolean): void {
   appWindowVisible = visible;
   document.body.classList.toggle('app-hidden', !visible || document.hidden);
   scheduleStatusPoll();
-  if (visible && !busy) void refreshStatus();
+  if (visible && !busy) {
+    void refreshStatus();
+    void loadTgwsState();
+  }
 }
 
 function finishBootstrap(state: BootstrapState): void {
@@ -1303,6 +1571,15 @@ async function downloadZapret(): Promise<void> {
 
 async function kickBootstrapIfMissing(): Promise<void> {
   if (bootstrapKickStarted || currentStatus?.pathsValid) return;
+  if (!currentStatus) {
+    // refreshStatus мог вернуться без данных, если уже шёл параллельный запрос
+    try {
+      const { status } = await api.getDashboardState({ light: true });
+      if (status.pathsValid) return;
+    } catch {
+      /* продолжаем как при отсутствии zapret */
+    }
+  }
   try {
     const config = await api.getConfig();
     if (config.skipAutoBootstrap) return;
@@ -1347,27 +1624,6 @@ async function pickPath(): Promise<void> {
   }
 }
 
-async function toggleTheme(): Promise<void> {
-  const next: AppTheme = getAppliedTheme() === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-  try {
-    await api.setTheme(next);
-  } catch {
-    /* local theme still applied */
-  }
-}
-
-async function initTheme(): Promise<void> {
-  try {
-    const config = await api.getConfig();
-    if (config.theme === 'light' || config.theme === 'dark') {
-      applyTheme(config.theme);
-    }
-  } catch {
-    applyTheme(getAppliedTheme());
-  }
-}
-
 async function init(): Promise<void> {
   initUi();
   initLoading({
@@ -1393,9 +1649,9 @@ async function init(): Promise<void> {
     strategyPickProgressPct: els.strategyPickProgressPct,
     strategyPickSpinner: els.strategyPickSpinner,
   });
-  await initTheme();
   strategyCustomSelect = enhanceSelect(els.strategySelect);
   gameFilterCustomSelect = enhanceSelect(els.gameFilterSelect);
+  ipsetCustomSelect = enhanceSelect(els.ipsetModeSelect);
   userListCustomSelect = enhanceSelect(els.userListKind);
   applyUserListEditor(currentUserListKind());
 
@@ -1436,7 +1692,7 @@ async function init(): Promise<void> {
   window.zapretApi.onAppUpdateAvailable((info) => showAppUpdateBanner(info));
   void refreshAppVersionLine();
 
-  log('Zapret App запущен', 'info');
+  log('Skvoz запущен', 'info');
   setStatusLoading(true, 'Подключение...');
   await refreshAdminState();
   updateControls(null);
@@ -1455,6 +1711,7 @@ async function init(): Promise<void> {
 
   await refreshStatus();
   setStatusLoading(false);
+  void loadLastTestResults();
 
   if (!currentStatus?.pathsValid) {
     void kickBootstrapIfMissing();
@@ -1480,7 +1737,7 @@ els.btnInstallAppUpdate.addEventListener('click', () => {
     void (async () => {
       const ok = await confirmModal(
         'Установить обновление',
-        `Установить Zapret App ${pendingAppUpdateInfo?.latest ?? ''} и перезапустить приложение?`
+        `Установить Skvoz ${pendingAppUpdateInfo?.latest ?? ''} и перезапустить приложение?`
       );
       if (!ok) return;
       setBusy(true);
@@ -1520,7 +1777,12 @@ els.btnToggle.addEventListener('click', () => {
   const running = currentStatus.bypass.running;
   void runAction(running ? 'Остановка обхода' : 'Запуск обхода', () =>
     running ? api.stopBypass() : api.startBypass()
-  );
+  ).then(() => {
+    // После включения сразу показываем, открываются ли сайты
+    if (!running && currentStatus?.bypass.running) {
+      window.setTimeout(() => void runAccessCheck(), 2_500);
+    }
+  });
 });
 
 els.btnFullRemove.addEventListener('click', () => {
@@ -1532,7 +1794,7 @@ els.btnFullRemove.addEventListener('click', () => {
       '• Удаление всех найденных папок zapret',
       '• Сброс настроек приложения',
       folder && folder !== '—' ? `\nПапка: ${folder}` : '',
-      '\nZapret App останется на компьютере.',
+      '\nSkvoz останется на компьютере.',
     ]
       .filter(Boolean)
       .join('\n');
@@ -1565,21 +1827,25 @@ els.userListQuickAdd.addEventListener('keydown', (event) => {
     void addUserListQuick();
   }
 });
-els.ipsetToggle.addEventListener('change', () => {
-  const wantLoaded = els.ipsetToggle.checked;
+els.ipsetModeSelect.addEventListener('change', () => {
+  const mode = els.ipsetModeSelect.value as 'loaded' | 'any' | 'none';
   void (async () => {
     if (busy) {
-      els.ipsetToggle.checked = !wantLoaded;
+      els.ipsetModeSelect.value = currentStatus?.settings.ipset ?? 'none';
+      ipsetCustomSelect?.rebuild();
       return;
     }
     setBusy(true);
     try {
-      const result = await api.toggleIpset();
+      const result = await api.setIpsetMode(mode);
       els.ipsetToggle.checked = result.ipset === 'loaded';
+      els.ipsetModeSelect.value = result.ipset;
+      ipsetCustomSelect?.rebuild();
       toast(result.ipset === 'loaded' ? 'IPSet включён' : 'IPSet выключен', 'success');
       await refreshStatus();
     } catch (err) {
-      els.ipsetToggle.checked = !wantLoaded;
+      els.ipsetModeSelect.value = currentStatus?.settings.ipset ?? 'none';
+      ipsetCustomSelect?.rebuild();
       reportFailure(err);
     } finally {
       setBusy(false);
@@ -1607,17 +1873,22 @@ els.autoPickStrategyToggle.addEventListener('change', () =>
     }
   })
 );
+els.autoUpdateZapretToggle.addEventListener('change', () =>
+  void runAction('Автообновление zapret', () => api.setAutoUpdateZapret(els.autoUpdateZapretToggle.checked))
+);
+els.minimizeToTrayToggle.addEventListener('change', () =>
+  void runAction('Сворачивание в трей', () => api.setMinimizeToTray(els.minimizeToTrayToggle.checked))
+);
 els.btnDiagnostics.addEventListener('click', () => void runTool('Диагностика', () => api.runDiagnostics()));
-els.btnFindBest.addEventListener('click', () => void runPickBestStrategy({ auto: false }));
+els.btnFindBest.addEventListener('click', () => void runPickBestStrategy({ quick: true }));
+els.btnFullCheck.addEventListener('click', () => void runPickBestStrategy({ quick: false }));
 els.btnCancelStrategyPick.addEventListener('click', () => {
   if (!strategyPickActive) return;
   els.btnCancelStrategyPick.disabled = true;
   els.strategyPickProgressText.textContent = 'Отмена...';
   void api.cancelPickBestStrategy();
 });
-els.btnTests.addEventListener('click', () =>
-  void runTool('Тест текущего конфига', () => api.runTests('current'), { isTest: true })
-);
+els.btnTests.addEventListener('click', () => void runCurrentStrategyTest());
 els.testResults.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
   const row = target.closest<HTMLElement>('[data-strategy]');
@@ -1635,8 +1906,8 @@ els.btnCheckUpdates.addEventListener('click', () => {
         ? `Zapret: последняя версия${zapretUpdate.current ? ` (${zapretUpdate.current})` : ''}.`
         : `Zapret: доступна ${zapretUpdate.latest ?? '?'}, сейчас ${zapretUpdate.current ?? '?'}.`;
       const appMessage = appUpdate.upToDate
-        ? `Zapret App: последняя версия (v${appUpdate.current}).`
-        : `Zapret App: доступна v${appUpdate.latest ?? '?'}, сейчас v${appUpdate.current}.`;
+        ? `Skvoz: последняя версия (v${appUpdate.current}).`
+        : `Skvoz: доступна v${appUpdate.latest ?? '?'}, сейчас v${appUpdate.current}.`;
       const message = `${appMessage}\n${zapretMessage}`;
 
       if (!appUpdate.upToDate && appUpdate.latest) {
@@ -1651,6 +1922,10 @@ els.btnCheckUpdates.addEventListener('click', () => {
       setBusy(false);
     }
   })();
+});
+restoreJournalCollapsed();
+document.getElementById('btnToggleJournal')?.addEventListener('click', () => {
+  setJournalCollapsed(!isJournalCollapsed());
 });
 els.btnClearLog.addEventListener('click', () => {
   clearJournal();
@@ -1674,6 +1949,337 @@ els.btnRestartAdmin?.addEventListener('click', () => {
     }
   })();
 });
-els.themeToggle?.addEventListener('click', () => void toggleTheme());
+
+// ── App tabs ────────────────────────────────────────────────────────────────
+
+type AppView = 'home' | 'bypass' | 'telegram' | 'settings' | 'tools';
+
+const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
+  home: ['Главная', 'Zapret и Telegram proxy в одном окне'],
+  bypass: ['Обход', 'Запуск zapret и выбор конфига'],
+  telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
+  settings: ['Настройки', 'Автозапуск, фильтры и свои списки'],
+  tools: ['Сервис', 'Инструменты, журнал и о приложении'],
+};
+
+function moveNavIndicator(): void {
+  const active = document.querySelector<HTMLElement>('.side-nav-btn.is-active');
+  const indicator = document.querySelector<HTMLElement>('.side-nav-indicator');
+  if (!active || !indicator) return;
+  indicator.style.transform = `translateY(${active.offsetTop + active.offsetHeight / 2 - 12}px)`;
+}
+
+window.addEventListener('resize', moveNavIndicator);
+
+function setActiveAppView(view: AppView): void {
+  try {
+    localStorage.setItem('zapret-app-view', view);
+  } catch {
+    /* ignore */
+  }
+  document.body.dataset.appView = view;
+  document.querySelectorAll<HTMLElement>('.page').forEach((page) => {
+    page.classList.toggle('is-active', page.dataset.page === view);
+  });
+  document.querySelectorAll<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.view === view);
+  });
+  const [title, subtitle] = APP_VIEW_TITLES[view];
+  const head = els.pageTitle.parentElement;
+  if (els.pageTitle.textContent !== title && head) {
+    head.classList.remove('swap');
+    void head.offsetWidth; // перезапуск анимации заголовка
+    head.classList.add('swap');
+  }
+  els.pageTitle.textContent = title;
+  els.pageSubtitle.textContent = subtitle;
+  moveNavIndicator();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+document.querySelectorAll<HTMLButtonElement>('.side-nav-btn, [data-goto]').forEach((button) => {
+  button.addEventListener('click', () =>
+    setActiveAppView(((button.dataset.view ?? button.dataset.goto) as AppView) ?? 'home')
+  );
+});
+els.btnQuickBypass.addEventListener('click', () => els.btnToggle.click());
+els.btnQuickTg.addEventListener('click', () => els.btnTgToggle.click());
+
+// Restore last selected tab
+{
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem('zapret-app-view');
+  } catch {
+    /* ignore */
+  }
+  setActiveAppView(saved && Object.prototype.hasOwnProperty.call(APP_VIEW_TITLES, saved) ? (saved as AppView) : 'home');
+}
+
+function flashButton(button: HTMLButtonElement, text: string): void {
+  const original = button.dataset.label ?? button.textContent ?? '';
+  button.dataset.label = original;
+  button.textContent = text;
+  button.classList.add('is-flashed');
+  window.setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove('is-flashed');
+  }, 1_400);
+}
+
+// F5 / Ctrl+R — обновить статус вместо перезагрузки окна
+document.addEventListener('keydown', (event) => {
+  const reload = event.key === 'F5' || (event.ctrlKey && event.key.toLowerCase() === 'r');
+  if (!reload) return;
+  event.preventDefault();
+  if (busy) return;
+  void refreshStatus(true);
+  void loadTgwsState();
+  toast('Статус обновлён', 'info');
+});
+
+// Ctrl+1…5 — страницы
+const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'settings', 'tools'];
+document.addEventListener('keydown', (event) => {
+  if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
+  const index = Number(event.key) - 1;
+  const view = HOTKEY_VIEWS[index];
+  if (!view || strategyPickActive) return;
+  if (!document.getElementById('modalOverlay')?.classList.contains('hidden')) return;
+  event.preventDefault();
+  setActiveAppView(view);
+});
+
+// ── Проверка доступа ────────────────────────────────────────────────────────
+
+let accessCheckRunning = false;
+
+async function runAccessCheck(): Promise<void> {
+  if (accessCheckRunning) return;
+  accessCheckRunning = true;
+  els.btnCheckAccess.disabled = true;
+  els.btnCheckAccess.textContent = 'Проверяем…';
+  els.accessMeta.textContent = 'Открываем сайты и стучимся в Telegram…';
+  els.accessGrid.querySelectorAll<HTMLElement>('.access-item').forEach((item) => {
+    item.className = 'access-item is-checking';
+    item.querySelector('.access-detail')!.textContent = 'проверяем…';
+    item.querySelector('.access-ms')!.textContent = '';
+  });
+  try {
+    const results = await api.checkAccess();
+    for (const result of results) {
+      const item = els.accessGrid.querySelector<HTMLElement>(`[data-service="${result.id}"]`);
+      if (!item) continue;
+      item.className = `access-item is-${result.status}`;
+      item.querySelector('.access-detail')!.textContent = result.detail;
+      item.querySelector('.access-ms')!.textContent = result.ms !== null ? `${result.ms} мс` : '';
+      item.title = `${result.name}: ${result.detail}`;
+    }
+    const okCount = results.filter((r) => r.status === 'ok').length;
+    const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    els.accessMeta.textContent = `Проверено в ${time} · работает ${okCount} из ${results.length}`;
+  } catch (err) {
+    els.accessMeta.textContent = 'Не удалось проверить доступ';
+    log(formatUserError(err), 'error');
+  } finally {
+    accessCheckRunning = false;
+    els.btnCheckAccess.disabled = false;
+    els.btnCheckAccess.textContent = 'Проверить';
+  }
+}
+
+els.btnCheckAccess.addEventListener('click', () => void runAccessCheck());
+
+// ── Telegram proxy tab ──────────────────────────────────────────────────────
+
+async function loadTgwsState(): Promise<void> {
+  try {
+    const state = await api.tgwsStatus();
+    tgwsConfig = state.config;
+    tgwsRunning = state.running;
+    tgwsStats = state.stats;
+
+    // Deck title / meta / dot
+    els.tgDeckTitle.textContent = tgwsRunning
+      ? `Работает на ${tgwsConfig.host}:${tgwsConfig.port}`
+      : 'Telegram proxy остановлен';
+    els.tgDeckMeta.textContent = tgwsRunning
+      ? 'Подключение MTProto→WebSocket через локальный прокси'
+      : 'Нажмите «Запустить» для запуска MTProto→WebSocket прокси';
+    els.tgStatusDot.classList.toggle('is-live', tgwsRunning);
+
+    // Stats
+    els.tgStatTotal.textContent = String(tgwsStats.total);
+    els.tgStatActive.textContent = String(tgwsStats.active);
+    els.tgStatWs.textContent = String(tgwsStats.ws);
+    els.tgStatTcp.textContent = String(tgwsStats.tcp);
+    els.tgStatBad.textContent = String(tgwsStats.bad);
+
+    // Buttons
+    els.btnTgToggle.textContent = tgwsRunning ? 'Остановить' : 'Запустить';
+    els.btnTgToggle.classList.toggle('btn-glow', !tgwsRunning);
+    els.btnTgToggle.classList.toggle('btn-soft', tgwsRunning);
+    els.btnTgDisconnect.classList.toggle('hidden', !tgwsRunning);
+    els.quickTgCard.classList.toggle('is-live', tgwsRunning);
+    els.quickTgDot.classList.toggle('is-live', tgwsRunning);
+    els.quickTgText.textContent = tgwsRunning
+      ? `Работает на ${tgwsConfig.host}:${tgwsConfig.port}`
+      : 'Прокси выключен';
+    els.quickTgMeta.textContent = tgwsRunning
+      ? `Подключений: ${tgwsStats.active} активных · ${tgwsStats.total} всего`
+      : tgwsConfig.autostart
+        ? 'Запускается вместе с приложением'
+        : '';
+    els.btnQuickTg.textContent = tgwsRunning ? 'Остановить' : 'Включить';
+    els.btnQuickTg.disabled = busy;
+
+    // Proxy link
+    const link = await api.tgwsProxyLink();
+    els.tgProxyLink.value = link ?? '';
+
+    // Config fields — не затираем то, что пользователь сейчас редактирует
+    if (!tgConfigDirty) {
+      els.tgPort.value = String(tgwsConfig.port);
+      els.tgHost.value = tgwsConfig.host;
+      els.tgSecret.value = tgwsConfig.secretHex;
+      els.tgAutostart.checked = tgwsConfig.autostart;
+    }
+  } catch (err) {
+    log(`TG proxy: ${formatUserError(err)}`, 'error');
+  }
+}
+
+function startTgwsPoll(): void {
+  if (tgwsPollTimer) clearInterval(tgwsPollTimer);
+  tgwsPollTimer = window.setInterval(() => {
+    if (appWindowVisible && !document.hidden) void loadTgwsState();
+  }, 5_000);
+}
+
+function stopTgwsPoll(): void {
+  if (tgwsPollTimer) {
+    clearInterval(tgwsPollTimer);
+    tgwsPollTimer = null;
+  }
+}
+
+els.btnTgToggle.addEventListener('click', async () => {
+  if (busy) return;
+  setBusy(true);
+  try {
+    if (tgwsRunning) {
+      await api.tgwsStop();
+      toast('Прокси остановлен', 'info');
+    } else {
+      await api.tgwsStart();
+      toast('Прокси запущен', 'success');
+    }
+    await loadTgwsState();
+  } catch (err) {
+    reportFailure(err, 'Ошибка управления прокси');
+  } finally {
+    setBusy(false);
+  }
+});
+
+els.btnTgDisconnect.addEventListener('click', async () => {
+  if (busy || !tgwsRunning) return;
+  setBusy(true);
+  try {
+    await api.tgwsStop();
+    toast('Прокси остановлен', 'info');
+    await loadTgwsState();
+  } catch (err) {
+    reportFailure(err, 'Ошибка остановки прокси');
+  } finally {
+    setBusy(false);
+  }
+});
+
+els.btnTgCopyLink.addEventListener('click', async () => {
+  const link = els.tgProxyLink.value.trim();
+  if (!link) {
+    toast('Ссылка прокси пуста', 'info');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Ссылка скопирована', 'success');
+    flashButton(els.btnTgCopyLink, 'Скопировано ✓');
+  } catch {
+    toast('Не удалось скопировать', 'error');
+  }
+});
+
+els.btnTgOpenTg.addEventListener('click', async () => {
+  const link = els.tgProxyLink.value.trim();
+  if (!link) {
+    toast('Ссылка прокси пуста', 'info');
+    return;
+  }
+  try {
+    await api.openExternal(link);
+  } catch (err) {
+    reportFailure(err, 'Ошибка открытия ссылки');
+  }
+});
+
+for (const input of [els.tgPort, els.tgHost, els.tgSecret, els.tgAutostart]) {
+  input.addEventListener('input', () => { tgConfigDirty = true; });
+  input.addEventListener('change', () => { tgConfigDirty = true; });
+}
+
+els.btnTgGenSecret.addEventListener('click', () => {
+  tgConfigDirty = true;
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  els.tgSecret.value = hex;
+});
+
+els.btnTgSaveConfig.addEventListener('click', async () => {
+  if (busy) return;
+  const portVal = Number(els.tgPort.value);
+  if (!Number.isInteger(portVal) || portVal < 1 || portVal > 65535) {
+    toast('Неверный порт (1–65535)', 'error');
+    return;
+  }
+  const secretVal = els.tgSecret.value.trim();
+  if (secretVal && !/^[0-9a-fA-F]{32}$/.test(secretVal)) {
+    toast('Секрет должен быть 32 hex-символа', 'error');
+    return;
+  }
+  setBusy(true);
+  try {
+    const updates: Partial<TgwsProxyConfig> = {
+      port: portVal,
+      host: els.tgHost.value.trim() || '127.0.0.1',
+      autostart: els.tgAutostart.checked,
+    };
+    if (secretVal) updates.secretHex = secretVal;
+    await api.tgwsSetConfig(updates);
+    tgConfigDirty = false;
+    toast('Конфигурация сохранена', 'success');
+    await loadTgwsState();
+  } catch (err) {
+    reportFailure(err, 'Ошибка сохранения конфигурации');
+  } finally {
+    setBusy(false);
+  }
+});
+
+// Initialize TG state on load
+void loadTgwsState();
+startTgwsPoll();
+
+els.btnUpdateIpset.addEventListener('click', () => {
+  void runTool('Обновление IPSet', () => api.updateIpsetList());
+});
+els.btnUpdateHosts.addEventListener('click', () => {
+  void runTool('Обновление hosts', () => api.updateHostsFile());
+});
+els.btnRemoveServices.addEventListener('click', () => {
+  void runTool('Удаление служб zapret', () => api.removeZapretServices());
+});
 
 export {};

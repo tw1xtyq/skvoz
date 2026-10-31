@@ -9,10 +9,26 @@ import { scanForInstallations, verifyInstallation } from './scanner';
 import { runDiagnosticsInApp } from './diagnostics';
 import { runTestsInApp, pickBestStrategy } from './tests-runner';
 import {
+  killWinwsProcesses,
+} from './bypass-prep';
+import {
   startBypassHidden,
 } from './service-actions';
 import { fullRemoveZapretFromPc } from './uninstall';
 import { runHidden } from './exec';
+import { hasIpsetBackup, readIpsetMode, setIpsetMode, type IpsetMode } from './zapret-maintenance';
+
+/** Подпись стратегии для выпадающего списка: убираем расширение .bat */
+export function formatStrategyLabel(fileName: string): string {
+  return fileName.replace(/\.bat$/i, '');
+}
+
+/** Дефолтная стратегия — только официальные: general.bat, иначе первая по списку. */
+export function resolvePreferredStrategy(zapretRoot: string): string | null {
+  const strategies = listStrategies(zapretRoot);
+  if (strategies.includes('general.bat')) return 'general.bat';
+  return strategies[0] ?? null;
+}
 
 export interface ZapretPaths {
   root: string;
@@ -38,6 +54,7 @@ export interface SettingsState {
   gameFilter: 'disabled' | 'all' | 'tcp' | 'udp';
   ipset: 'loaded' | 'none' | 'any';
   checkUpdates: boolean;
+  ipsetBackupAvailable: boolean;
 }
 
 export interface ZapretStatus {
@@ -62,7 +79,7 @@ export function getEmptyStatus(): ZapretStatus {
     bypass: { running: false, pid: null },
     zapretService: { exists: false, running: false, state: 'NOT_FOUND', strategy: null },
     windivertService: { exists: false, running: false, state: 'NOT_FOUND', strategy: null },
-    settings: { gameFilter: 'disabled', ipset: 'none', checkUpdates: false },
+    settings: { gameFilter: 'disabled', ipset: 'none', checkUpdates: false, ipsetBackupAvailable: false },
     strategies: [],
     selectedStrategy: null,
     installedVersion: null,
@@ -206,12 +223,7 @@ function readGameFilter(utilsDir: string): SettingsState['gameFilter'] {
 }
 
 function readIpsetStatus(listsDir: string): SettingsState['ipset'] {
-  const listFile = path.join(listsDir, 'ipset-all.txt');
-  if (!fs.existsSync(listFile)) return 'any';
-  const content = fs.readFileSync(listFile, 'utf8').trim();
-  if (!content) return 'any';
-  if (content.includes('203.0.113.113/32')) return 'none';
-  return 'loaded';
+  return readIpsetMode(listsDir);
 }
 
 function readCheckUpdates(utilsDir: string): boolean {
@@ -222,8 +234,8 @@ let cachedLatestVersion: { value: string | null; at: number } | null = null;
 let statusCache: { root: string; status: ZapretStatus; at: number } | null = null;
 let verificationCache: { root: string; isOfficial: boolean; warnings: string[]; at: number } | null = null;
 
-const STATUS_CACHE_MS = 8000;
-const STATUS_CACHE_LIGHT_MS = 15_000;
+const STATUS_CACHE_MS = 10_000;
+const STATUS_CACHE_LIGHT_MS = 20_000;
 const VERIFICATION_CACHE_MS = 5 * 60_000;
 
 export function invalidateStatusCache(): void {
@@ -287,11 +299,13 @@ export async function getStatus(
     }
   }
 
-  const [bypass, zapretServiceRaw, windivertService] = await Promise.all([
-    isWinwsRunning(),
-    queryService('zapret'),
-    queryService('WinDivert'),
-  ]);
+  const [bypass, zapretServiceRaw, windivertService] = options.light
+    ? [
+        await isWinwsRunning(),
+        { exists: false, running: false, state: 'NOT_FOUND', strategy: null },
+        { exists: false, running: false, state: 'NOT_FOUND', strategy: null },
+      ]
+    : await Promise.all([isWinwsRunning(), queryService('zapret'), queryService('WinDivert')]);
 
   const zapretService = { ...zapretServiceRaw };
   if (zapretService.running && !bypass.running) {
@@ -307,6 +321,7 @@ export async function getStatus(
     gameFilter: readGameFilter(paths.utils),
     ipset: readIpsetStatus(paths.lists),
     checkUpdates: readCheckUpdates(paths.utils),
+    ipsetBackupAvailable: hasIpsetBackup(paths.lists),
   };
 
   let selectedStrategy: string | null = null;
@@ -347,14 +362,43 @@ export async function verifyBypassRunning(): Promise<BypassState> {
   return isWinwsRunning();
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function stopBypass(onLine?: (line: { text: string; level: string }) => void): Promise<void> {
   onLine?.({ text: 'Остановка winws.exe...', level: 'info' });
   try {
-    await runHidden('taskkill', ['/IM', 'winws.exe', '/F'], {
-      onLine: (line) => onLine?.(line),
-    });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      await killWinwsProcesses();
+      await delay(450);
+
+      const state = await verifyBypassRunning();
+      if (!state.running) {
+        onLine?.({ text: '[OK] Обход остановлен', level: 'success' });
+        return;
+      }
+
+      if (attempt < 3) {
+        onLine?.({
+          text: `winws.exe ещё активен (PID ${state.pid ?? '?'}), повтор остановки...`,
+          level: 'warn',
+        });
+      }
+    }
+
+    const still = await verifyBypassRunning();
+    if (still.running) {
+      throw new Error(
+        `winws.exe не остановился (PID ${still.pid ?? '?'}). Запустите приложение от администратора.`
+      );
+    }
     onLine?.({ text: '[OK] Обход остановлен', level: 'success' });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('не остановился')) {
+      onLine?.({ text: error.message, level: 'error' });
+      throw error;
+    }
     onLine?.({ text: '[OK] winws.exe уже остановлен', level: 'success' });
   } finally {
     invalidateStatusCache();
@@ -384,11 +428,8 @@ export async function getProcessStatusReport(
   root: string,
   out: (line: { text: string; level: 'info' | 'success' | 'warn' | 'error' }) => void
 ): Promise<void> {
-  void root;
-
-  const bypass = await isWinwsRunning();
   const status = await getStatus(root);
-  const strategy = status.selectedStrategy;
+  const { bypass, zapretService, windivertService, settings, selectedStrategy } = status;
 
   if (bypass.running) {
     out({
@@ -399,10 +440,49 @@ export async function getProcessStatusReport(
     out({ text: 'Обход остановлен: winws.exe не запущен', level: 'info' });
   }
 
-  if (strategy) {
-    out({ text: `Конфиг: ${strategy.replace('.bat', '')}`, level: 'info' });
+  if (selectedStrategy) {
+    out({ text: `Конфиг: ${selectedStrategy.replace('.bat', '')}`, level: 'info' });
   } else {
     out({ text: 'Конфиг не выбран', level: 'warn' });
+  }
+
+  const ipsetLabels: Record<SettingsState['ipset'], string> = {
+    loaded: 'loaded',
+    none: 'none',
+    any: 'any',
+  };
+  const gameLabels: Record<SettingsState['gameFilter'], string> = {
+    disabled: 'disabled',
+    all: 'enabled (TCP and UDP)',
+    tcp: 'enabled (TCP)',
+    udp: 'enabled (UDP)',
+  };
+
+  out({ text: `Game Filter: ${gameLabels[settings.gameFilter]}`, level: 'info' });
+  out({ text: `IPSet Filter: ${ipsetLabels[settings.ipset]}`, level: 'info' });
+  out({
+    text: `Автообновления: ${settings.checkUpdates ? 'включены' : 'выключены'}`,
+    level: 'info',
+  });
+
+  if (zapretService.exists) {
+    out({
+      text: `Служба zapret: ${zapretService.running ? 'запущена' : zapretService.state}${
+        zapretService.strategy ? ` (${zapretService.strategy})` : ''
+      }`,
+      level: zapretService.running ? 'success' : 'warn',
+    });
+  } else {
+    out({ text: 'Служба zapret: не установлена', level: 'info' });
+  }
+
+  if (windivertService.exists) {
+    out({
+      text: `Служба WinDivert: ${windivertService.running ? 'запущена' : windivertService.state}`,
+      level: windivertService.running ? 'success' : 'warn',
+    });
+  } else {
+    out({ text: 'Служба WinDivert: не установлена', level: 'info' });
   }
 
   if (!bypass.running) {
@@ -439,7 +519,7 @@ export function runTests(
 export function pickBestStrategyForRoot(
   root: string,
   onLine?: (line: { text: string; level: string }) => void,
-  options?: { emitUiEvents?: boolean; shouldCancel?: () => boolean }
+  options?: { emitUiEvents?: boolean; shouldCancel?: () => boolean; quick?: boolean }
 ): Promise<Awaited<ReturnType<typeof pickBestStrategy>>> {
   return pickBestStrategy(root, (line) => onLine?.(line), options);
 }
@@ -462,27 +542,16 @@ export function setCheckUpdates(root: string, enabled: boolean): void {
   }
 }
 
+export function setIpsetModeForRoot(root: string, mode: IpsetMode): SettingsState['ipset'] {
+  invalidateStatusCache();
+  return setIpsetMode(root, mode);
+}
+
 export function toggleIpset(root: string): SettingsState['ipset'] {
   const listsDir = path.join(root, 'lists');
-  const listFile = path.join(listsDir, 'ipset-all.txt');
-  const backupFile = `${listFile}.backup`;
-  const status = readIpsetStatus(listsDir);
-
-  if (status === 'loaded') {
-    if (fs.existsSync(listFile)) {
-      if (fs.existsSync(backupFile)) fs.unlinkSync(backupFile);
-      fs.renameSync(listFile, backupFile);
-    }
-    fs.writeFileSync(listFile, '203.0.113.113/32\n', 'utf8');
-  } else {
-    if (!fs.existsSync(backupFile)) {
-      throw new Error('Не найден список IPSet. Переустановите zapret или восстановите lists/ipset-all.txt');
-    }
-    if (fs.existsSync(listFile)) fs.unlinkSync(listFile);
-    fs.renameSync(backupFile, listFile);
-  }
-
-  return readIpsetStatus(listsDir);
+  const current = readIpsetMode(listsDir);
+  const next: IpsetMode = current === 'loaded' ? 'none' : current === 'none' ? 'any' : 'loaded';
+  return setIpsetMode(root, next);
 }
 
 export async function checkForUpdates(root: string): Promise<{

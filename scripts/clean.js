@@ -3,12 +3,15 @@ const path = require('path');
 
 const root = path.join(__dirname, '..');
 
-const removePaths = [
+// node scripts/clean.js dist — удалить только перечисленное
+const defaultPaths = [
   'dist',
   'release',
   'out',
   path.join('assets', 'icon.ico'),
 ];
+
+const removePaths = process.argv.length > 2 ? process.argv.slice(2) : defaultPaths;
 
 for (const rel of removePaths) {
   const target = path.join(root, rel);

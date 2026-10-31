@@ -24,6 +24,7 @@ export interface AppUpdateStatus {
   current: string;
   latest: string | null;
   upToDate: boolean;
+  checkFailed?: boolean;
   releasePage: string | null;
   releaseNotes: string | null;
 }
@@ -114,7 +115,7 @@ export function getCurrentAppVersion(): string {
 function isInstalledViaNsis(): boolean {
   if (!app.isPackaged) return false;
   const exeDir = path.dirname(process.execPath);
-  if (fs.existsSync(path.join(exeDir, 'Uninstall Zapret App.exe'))) return true;
+  if (['Uninstall Skvoz.exe', 'Uninstall Zapret App.exe'].some((name) => fs.existsSync(path.join(exeDir, name)))) return true;
   const exe = process.execPath.toLowerCase();
   return exe.includes('\\program files\\') || exe.includes('\\program files (x86)\\');
 }
@@ -147,7 +148,7 @@ export async function fetchLatestAppRelease(kind = preferredUpdateKind()): Promi
   });
 
   if (!response.ok) {
-    throw new Error(`Не удалось получить релиз Zapret App: HTTP ${response.status}`);
+    throw new Error(`Не удалось получить релиз Skvoz: HTTP ${response.status}`);
   }
 
   const data = (await response.json()) as {
@@ -203,7 +204,8 @@ export async function checkAppUpdate(): Promise<AppUpdateStatus> {
     return {
       current,
       latest: null,
-      upToDate: true,
+      upToDate: false,
+      checkFailed: true,
       releasePage: null,
       releaseNotes: null,
     };
@@ -285,13 +287,13 @@ export async function downloadAppUpdate(onProgress: ProgressCallback): Promise<P
   const current = getCurrentAppVersion();
 
   if (compareVersions(current, release.version) >= 0) {
-    throw new Error('У вас уже установлена последняя версия Zapret App');
+    throw new Error('У вас уже установлена последняя версия Skvoz');
   }
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zapret-app-update-'));
   const destPath = path.join(tempDir, release.fileName || `Zapret-App-${release.version}`);
 
-  onProgress({ stage: 'fetch', percent: 0, message: `Загрузка Zapret App ${release.version}...` });
+  onProgress({ stage: 'fetch', percent: 0, message: `Загрузка Skvoz ${release.version}...` });
   await downloadFile(release.downloadUrl, destPath, onProgress);
 
   if (release.kind === 'source') {
@@ -300,7 +302,7 @@ export async function downloadAppUpdate(onProgress: ProgressCallback): Promise<P
 
     const stagingPath = findAppRoot(extractDir);
     if (!stagingPath) {
-      throw new Error('В архиве обновления не найден package.json Zapret App');
+      throw new Error('В архиве обновления не найден package.json Skvoz');
     }
 
     onProgress({
@@ -323,7 +325,7 @@ export async function downloadAppUpdate(onProgress: ProgressCallback): Promise<P
 
 function scheduleSourceUpdateApply(stagingPath: string): void {
   const appRoot = getAppRoot();
-  const launcherBat = path.join(appRoot, 'Zapret App.bat');
+  const launcherBat = path.join(appRoot, 'Skvoz.bat');
   const launcherCmd = path.join(appRoot, 'scripts', 'start-win.cmd');
   const launcher = fs.existsSync(launcherBat) ? launcherBat : launcherCmd;
   const pid = process.pid;
@@ -390,7 +392,7 @@ for ($attempt = 0; $attempt -lt 12; $attempt++) {
 }
 
 if (-not $replaced) {
-  throw 'Не удалось заменить portable exe. Закройте Zapret App и установите обновление вручную.'
+  throw 'Не удалось заменить portable exe. Закройте Skvoz и установите обновление вручную.'
 }
 
 ${launchInstalledAppPs(currentExe)}

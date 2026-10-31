@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'">
+  <title>Skvoz</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="tray-popup">
+  <header class="tp-head">
+    <img src="assets/logo.png" alt="">
+    <strong>Skvoz</strong>
+    <span class="tp-summary" id="tpSummary">…</span>
+  </header>
+
+  <div class="tp-row" id="tpBypass">
+    <span class="tp-dot" aria-hidden="true"></span>
+    <div class="tp-copy">
+      <strong>Zapret</strong>
+      <span id="tpBypassText">Проверяем…</span>
+    </div>
+    <label class="switch tp-switch" title="Включить или выключить обход">
+      <input type="checkbox" id="tpBypassToggle">
+      <span class="switch-ui"></span>
+    </label>
+  </div>
+
+  <div class="tp-row" id="tpTg">
+    <span class="tp-dot" aria-hidden="true"></span>
+    <div class="tp-copy">
+      <strong>Telegram proxy</strong>
+      <span id="tpTgText">Проверяем…</span>
+    </div>
+    <label class="switch tp-switch" title="Включить или выключить прокси">
+      <input type="checkbox" id="tpTgToggle">
+      <span class="switch-ui"></span>
+    </label>
+  </div>
+
+  <div class="tp-access" id="tpAccess">
+    <span data-service="discord">Discord</span>
+    <span data-service="youtube">YouTube</span>
+    <span data-service="telegram">Telegram</span>
+  </div>
+
+  <p class="tp-error hidden" id="tpError"></p>
+
+  <footer class="tp-actions">
+    <button class="btn btn-soft btn-sm" id="tpCheck" type="button">Проверить доступ</button>
+    <button class="btn btn-glow btn-sm" id="tpOpen" type="button">Открыть</button>
+  </footer>
+
+  <script type="module" src="tray.js"></script>
+</body>
+</html>

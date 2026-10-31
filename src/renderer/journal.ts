@@ -27,9 +27,38 @@ export function clearJournal(): void {
   setJournalStatus('');
 }
 
+const COLLAPSED_KEY = 'zapret-journal-collapsed';
+
+export function setJournalCollapsed(collapsed: boolean): void {
+  const panel = journalPanel();
+  const toggle = document.getElementById('btnToggleJournal') as HTMLButtonElement | null;
+  if (panel) panel.classList.toggle('collapsed', collapsed);
+  toggle?.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  try {
+    localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isJournalCollapsed(): boolean {
+  return journalPanel()?.classList.contains('collapsed') ?? false;
+}
+
+export function restoreJournalCollapsed(): void {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(COLLAPSED_KEY) === '1';
+  } catch {
+    /* ignore */
+  }
+  setJournalCollapsed(collapsed);
+}
+
 export function focusJournal(expanded = true): void {
   const panel = journalPanel();
   const body = journalEl();
+  if (expanded) setJournalCollapsed(false);
   if (panel) panel.classList.toggle('focused', expanded);
   if (body) body.classList.toggle('expanded', expanded);
 }
@@ -63,6 +92,9 @@ export function appendJournalLine(text: string, level: JournalLevel = 'info'): v
   entry.append(time, badge, msg);
   root.appendChild(entry);
   lineCount += 1;
+  if (level === 'warn' || level === 'error') {
+    setJournalCollapsed(false);
+  }
   if (lineCount <= 8) {
     requestAnimationFrame(() => {
       entry.style.animationDelay = `${Math.min(lineCount * 0.02, 0.2)}s`;

@@ -15,7 +15,7 @@ exports.default = async function afterPack(context) {
   const pkg = require('../package.json');
   const version = String(pkg.version || '1.0.0');
   const versionQuad = `${version.split('.').concat(['0', '0', '0']).slice(0, 4).join('.')}`;
-  const productName = context.packager.appInfo.productName || 'Zapret App';
+  const productName = context.packager.appInfo.productName || 'Skvoz';
 
   await rcedit(exe, {
     icon,

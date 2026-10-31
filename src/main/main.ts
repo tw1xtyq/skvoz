@@ -1,18 +1,19 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, screen } from 'electron';
+import './app-paths';
+import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, screen, clipboard, Notification } from 'electron';
 import { loadAppIcon } from './icons';
 import fs from 'fs';
 import path from 'path';
 import { runAutonomousBootstrap, type BootstrapState } from './autonomous';
 import { scanForInstallations, verifyInstallation } from './scanner';
-import { isWindowsAdmin, restartAsAdmin, elevateIfNeeded } from './admin';
-import { applyLaunchAtStartup, isStartupLaunch, syncLaunchAtStartup } from './autostart';
+import { isWindowsAdmin, restartAsAdmin } from './admin';
+import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, syncLaunchAtStartup } from './autostart';
 import {
   addUserListEntries,
   readUserLists,
   saveUserList,
   type UserListKind,
 } from './user-lists';
-import { PickBestStrategyCancelledError } from './tests-runner';
+import type { TestResultPayload } from './tests-runner';
 import { APP_WINDOW } from './window-size';
 import {
   checkAppUpdate,
@@ -42,14 +43,32 @@ import {
   startBypass,
   stopBypass,
   toggleIpset,
+  setIpsetModeForRoot,
   verifyBypassRunning,
   fullRemoveZapret,
   invalidateStatusCache,
   pickBestStrategyForRoot,
+  listStrategies,
   type SettingsState,
 } from './zapret';
+import {
+  listFakeBins,
+  replaceActiveFake,
+  removeWindowsServices,
+  updateHostsFile,
+  updateIpsetList,
+  type IpsetMode,
+} from './zapret-maintenance';
+import {
+  configureBypassWatchdog,
+  setBypassWatchdogExpected,
+  startBypassWatchdog,
+  stopBypassWatchdog,
+} from './bypass-watchdog';
+import { tgwsProxy, type TgwsProxyConfig } from './tgws-proxy';
+import { checkAccess } from './access-check';
 
-const APP_DISPLAY_NAME = 'Zapret App';
+const APP_DISPLAY_NAME = 'Skvoz';
 const APP_USER_MODEL_ID = 'com.protheticglitch.zapret-app';
 
 app.setName(APP_DISPLAY_NAME);
@@ -75,12 +94,14 @@ interface AppConfig {
   selectedStrategy: string | null;
   minimizeToTray: boolean;
   bootstrapDone: boolean;
-  theme: 'dark' | 'light';
   launchAtStartup: boolean;
   autoStartBypass: boolean;
   autoPickBestStrategy: boolean;
+  bypassStoppedByUser: boolean;
+  bypassAutoRecover: boolean;
   dismissedAppVersion: string | null;
   skipAutoBootstrap: boolean;
+  autoUpdateZapret: boolean;
   settingsRevision?: number;
 }
 
@@ -103,13 +124,16 @@ const PATH_SCAN_COOLDOWN_MS = 5 * 60 * 1000;
 interface TrayMenuState {
   running: boolean;
   canStart: boolean;
+  strategy: string | null;
 }
 
-let trayMenuState: TrayMenuState = { running: false, canStart: false };
+let trayMenuState: TrayMenuState = { running: false, canStart: false, strategy: null };
 let trayMenuStateAt = 0;
 
 const TRAY_MENU_CACHE_MS = 10_000;
 const TRAY_SYNC_MS = 45_000;
+const LAUNCH_SYNC_MS = 120_000;
+let launchAtStartupSyncedAt = 0;
 let pendingAppUpdate: PendingAppUpdate | null = null;
 let ipcRegistered = false;
 let startupTasksPromise: Promise<void> | null = null;
@@ -126,13 +150,15 @@ function loadConfig(): AppConfig {
     selectedStrategy: null,
     minimizeToTray: true,
     bootstrapDone: false,
-    theme: 'dark',
     launchAtStartup: false,
     autoStartBypass: false,
     autoPickBestStrategy: true,
+    bypassStoppedByUser: false,
+    bypassAutoRecover: true,
     dismissedAppVersion: null,
     skipAutoBootstrap: false,
     settingsRevision: SETTINGS_REVISION,
+    autoUpdateZapret: true,
   };
 
   try {
@@ -155,11 +181,79 @@ function saveConfig(config: AppConfig): void {
   fs.writeFileSync(configPath(), JSON.stringify(config, null, 2), 'utf8');
 }
 
+function markBypassStoppedByUser(): void {
+  if (config.bypassStoppedByUser) return;
+  config.bypassStoppedByUser = true;
+  saveConfig(config);
+}
+
+function clearBypassStoppedByUser(): void {
+  if (!config.bypassStoppedByUser) return;
+  config.bypassStoppedByUser = false;
+  saveConfig(config);
+}
+
+function markBypassExpectedRunning(running: boolean): void {
+  setBypassWatchdogExpected(running);
+}
+
+function initTgwsProxy(): void {
+  tgwsProxy.onLog((level, message) => {
+    // по строке на каждое подключение — шум; в журнал только важное
+    if (level !== 'info') sendToolOutput(`[TG] ${message}`, level);
+  });
+  tgwsProxy.onStateChange(() => void refreshTrayMenu());
+  if (tgwsProxy.getConfig().autostart) {
+    tgwsProxy.start().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      sendToolOutput(`[TG] Автозапуск прокси не удался: ${message}`, 'error');
+      notify('Telegram proxy не запустился', message);
+    });
+  }
+}
+
+function initBypassWatchdog(): void {
+  configureBypassWatchdog({
+    intervalMs: 8_000,
+    healthCheckIntervalMs: 30_000,
+    maxAttempts: 8,
+    isStoppedByUser: () => config.bypassStoppedByUser,
+    autoRecoverEnabled: () => config.bypassAutoRecover !== false,
+    resolveZapretPath: () => tryResolveZapretPath({ allowScan: false }),
+    resolveStrategy: async (root) => {
+      const status = await getStatus(root, { light: true });
+      const strategy = config.selectedStrategy ?? status.selectedStrategy;
+      if (!strategy || !status.strategies.includes(strategy)) return null;
+      return strategy;
+    },
+    restartBypass: async (root, strategy) => {
+      await startBypass(root, strategy, (line) => sendToolOutput(line.text, line.level));
+    },
+    onOutput: (text, level) => sendToolOutput(text, level),
+    onRecovered: () => {
+      invalidateStatusCache();
+      notify('Обход восстановлен', 'winws.exe перезапущен автоматически.');
+      mainWindow?.webContents.send('bypass-auto-started');
+      void refreshTrayMenu(true);
+    },
+    onGiveUp: () => {
+      invalidateStatusCache();
+      mainWindow?.webContents.send('bypass-watchdog-stopped');
+      notify('Обход остановился', 'winws.exe упал и не перезапустился. Откройте приложение, чтобы проверить конфиг.');
+      void refreshTrayMenu(true);
+    },
+  });
+  startBypassWatchdog();
+}
+
 let config = loadConfig();
 
-function windowBackground(theme: AppConfig['theme'] = config.theme): string {
-  return theme === 'light' ? '#dde4ee' : '#030304';
-}
+const WINDOW_BACKGROUND = '#06070c';
+
+/** Кнопки окна рисует Windows поверх нашей полосы заголовка — цвета должны совпадать с --titlebar-bg. */
+const TITLEBAR_HEIGHT = 38;
+
+const TITLEBAR_OVERLAY: Electron.TitleBarOverlayOptions = { color: '#0b0c14', symbolColor: '#c9cbe6', height: TITLEBAR_HEIGHT };
 
 function sendBootstrap(state: BootstrapState): void {
   bootstrapState = state;
@@ -308,6 +402,88 @@ async function ensureBootstrap(force = false): Promise<void> {
   return bootstrapPromise;
 }
 
+// ── Автообновление zapret ─────────────────────────────────────────────
+
+const ZAPRET_UPDATE_FIRST_CHECK_MS = 90_000;
+const ZAPRET_UPDATE_INTERVAL_MS = 6 * 60 * 60_000;
+let zapretUpdateRunning = false;
+let zapretUpdateTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Ставит свежий релиз Flowseal рядом со старым (списки пользователя переносятся),
+ * переключает путь и, если обход работал, поднимает его обратно с тем же конфигом.
+ */
+async function autoUpdateZapret(): Promise<void> {
+  if (!config.autoUpdateZapret || zapretUpdateRunning || autoPickBestStrategyRunning) return;
+  const root = getKnownZapretPath();
+  if (!root || !isValidZapretPath(root)) return;
+
+  zapretUpdateRunning = true;
+  try {
+    const info = await checkForUpdates(root);
+    if (info.upToDate || !info.latest) return;
+
+    const status = await getStatus(root, { fresh: true });
+    if (status.zapretService.exists) {
+      // служба Windows указывает на старую папку — менять её молча нельзя
+      notify('Доступно обновление zapret', `Версия ${info.latest}. Удалите службу zapret и обновите из приложения.`);
+      return;
+    }
+    const wasRunning = status.bypass.running;
+    if (wasRunning && !isWindowsAdmin()) {
+      notify('Доступно обновление zapret', `Версия ${info.latest}. Перезапустите приложение от администратора.`);
+      return;
+    }
+
+    sendToolOutput(`Найден zapret ${info.latest} (сейчас ${info.current ?? '?'}) — обновляю...`, 'info');
+    if (wasRunning) {
+      markBypassExpectedRunning(false);
+      await stopBypass((line) => sendToolOutput(line.text, line.level));
+      await delay(900);
+    }
+
+    const result = await downloadOfficialZapret(config.installBase, root, sendDownloadProgress);
+    config.zapretPath = result.installPath;
+    saveConfig(config);
+    sanitizeSelectedStrategy(result.installPath);
+    invalidateStatusCache();
+
+    if (wasRunning) {
+      const fresh = await getStatus(result.installPath, { fresh: true });
+      const strategy = config.selectedStrategy ?? fresh.selectedStrategy;
+      if (strategy) {
+        await startBypass(result.installPath, strategy, (line) => sendToolOutput(line.text, line.level));
+        markBypassExpectedRunning(true);
+      }
+    }
+
+    bootstrapState = {
+      stage: 'ready',
+      message: `Zapret обновлён до ${result.version}`,
+      scan: null,
+      selected: null,
+      isOfficial: true,
+      warnings: [],
+      autoFixed: false,
+    };
+    mainWindow?.webContents.send('bootstrap-complete', bootstrapState);
+    sendToolOutput(`[OK] Zapret обновлён до ${result.version}`, 'success');
+    notify('Zapret обновлён', `Установлена версия ${result.version}${wasRunning ? ', обход перезапущен' : ''}.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Автообновление zapret не удалось: ${message}`, 'warn');
+  } finally {
+    zapretUpdateRunning = false;
+    void refreshTrayMenu(true);
+  }
+}
+
+function scheduleZapretAutoUpdate(): void {
+  if (zapretUpdateTimer) clearInterval(zapretUpdateTimer);
+  setTimeout(() => void autoUpdateZapret(), ZAPRET_UPDATE_FIRST_CHECK_MS);
+  zapretUpdateTimer = setInterval(() => void autoUpdateZapret(), ZAPRET_UPDATE_INTERVAL_MS);
+}
+
 async function runStartupTasks(): Promise<void> {
   if (startupTasksPromise) return startupTasksPromise;
 
@@ -334,8 +510,10 @@ function createWindow(): void {
     x,
     y,
     title: APP_DISPLAY_NAME,
-    backgroundColor: windowBackground(),
+    backgroundColor: WINDOW_BACKGROUND,
     autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: TITLEBAR_OVERLAY,
     show: false,
     icon: windowIcon.isEmpty() ? undefined : windowIcon,
     webPreferences: {
@@ -351,12 +529,14 @@ function createWindow(): void {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  mainWindow.webContents.once('did-finish-load', () => {
+  mainWindow.once('ready-to-show', () => {
     const silentStartup = isStartupLaunch() && config.minimizeToTray;
     if (!silentStartup) {
       mainWindow?.show();
     }
+  });
 
+  mainWindow.webContents.once('did-finish-load', () => {
     setImmediate(() => {
       if (isStartupLaunch()) return;
 
@@ -394,13 +574,86 @@ function scheduleTraySync(): void {
   }, TRAY_SYNC_MS);
 }
 
+// ── Мини-окно у трея ──────────────────────────────────────────────────
+
+const TRAY_WINDOW_SIZE = { width: 330, height: 318 };
+let trayWindow: BrowserWindow | null = null;
+let trayWindowHiddenAt = 0;
+
+function createTrayWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    ...TRAY_WINDOW_SIZE,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: WINDOW_BACKGROUND,
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'preload', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: false,
+      devTools: !app.isPackaged,
+    },
+  });
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'tray.html'));
+  win.on('blur', () => {
+    trayWindowHiddenAt = Date.now();
+    win.hide();
+  });
+  win.on('closed', () => {
+    trayWindow = null;
+  });
+  return win;
+}
+
+/** Ставит окно над значком: снизу, сверху или сбоку — смотря где панель задач. */
+function positionTrayWindow(win: BrowserWindow): void {
+  if (!tray) return;
+  const icon = tray.getBounds();
+  const display = screen.getDisplayNearestPoint({ x: icon.x, y: icon.y });
+  const area = display.workArea;
+  const { width, height } = TRAY_WINDOW_SIZE;
+  const gap = 8;
+
+  let x = Math.round(icon.x + icon.width / 2 - width / 2);
+  let y = icon.y > area.y + area.height / 2 ? icon.y - height - gap : icon.y + icon.height + gap;
+  if (icon.width === 0) {
+    x = area.x + area.width - width - gap;
+    y = area.y + area.height - height - gap;
+  }
+  x = Math.min(Math.max(x, area.x + gap), area.x + area.width - width - gap);
+  y = Math.min(Math.max(y, area.y + gap), area.y + area.height - height - gap);
+  win.setPosition(x, y, false);
+}
+
+function toggleTrayWindow(): void {
+  // клик по значку сначала снимает фокус с окна (blur), не открываем его заново тем же кликом
+  if (Date.now() - trayWindowHiddenAt < 250) return;
+  if (!trayWindow) trayWindow = createTrayWindow();
+  if (trayWindow.isVisible()) {
+    trayWindow.hide();
+    return;
+  }
+  positionTrayWindow(trayWindow);
+  trayWindow.setBackgroundColor(WINDOW_BACKGROUND);
+  trayWindow.show();
+  trayWindow.focus();
+}
+
 function createTray(): void {
   const icon = loadAppIcon(32);
   if (icon.isEmpty()) return;
 
   tray = new Tray(icon);
-  tray.setToolTip('Zapret App');
-  tray.on('double-click', () => mainWindow?.show());
+  tray.setToolTip('Skvoz');
+  tray.on('click', () => toggleTrayWindow());
+  tray.on('double-click', () => focusMainWindow());
   tray.on('right-click', () => {
     void refreshTrayMenu();
   });
@@ -408,59 +661,74 @@ function createTray(): void {
   void refreshTrayMenu();
 }
 
+function trayTooltip(): string {
+  const zapret = trayMenuState.running ? 'обход включён' : 'обход выключен';
+  const tg = tgwsProxy.isRunning() ? 'TG proxy работает' : 'TG proxy выключен';
+  return `Skvoz — ${zapret}, ${tg}`;
+}
+
 async function refreshTrayMenu(force = false): Promise<void> {
   if (!tray) return;
 
   const cacheFresh = !force && Date.now() - trayMenuStateAt < TRAY_MENU_CACHE_MS;
-  if (cacheFresh) {
-    tray.setContextMenu(buildTrayMenu(trayMenuState.running, trayMenuState.canStart));
-    tray.setToolTip(
-      trayMenuState.running ? 'Zapret App — обход включён' : 'Zapret App — обход выключен'
-    );
-    return;
-  }
+  if (!cacheFresh) {
+    let running = false;
+    let canStart = false;
+    let strategy: string | null = null;
 
-  let running = false;
-  let canStart = false;
-
-  try {
-    const zapretPath = getKnownZapretPath();
-    if (zapretPath) {
-      sanitizeSelectedStrategy(zapretPath);
-      const status = await getStatus(zapretPath, { light: true });
-      running = status.bypass.running;
-      if (!running) {
-        const strategy = config.selectedStrategy ?? status.selectedStrategy;
-        canStart =
-          isWindowsAdmin() &&
-          status.strategies.length > 0 &&
-          !!strategy &&
-          status.strategies.includes(strategy);
+    try {
+      const zapretPath = getKnownZapretPath();
+      if (zapretPath) {
+        sanitizeSelectedStrategy(zapretPath);
+        const status = await getStatus(zapretPath, { light: true });
+        running = status.bypass.running;
+        strategy = config.selectedStrategy ?? status.selectedStrategy;
+        if (!running) {
+          canStart =
+            isWindowsAdmin() &&
+            status.strategies.length > 0 &&
+            !!strategy &&
+            status.strategies.includes(strategy);
+        }
       }
+    } catch {
+      /* keep menu usable */
     }
-  } catch {
-    /* keep menu usable */
+
+    trayMenuState = { running, canStart, strategy };
+    trayMenuStateAt = Date.now();
   }
 
-  trayMenuState = { running, canStart };
-  trayMenuStateAt = Date.now();
-  tray.setContextMenu(buildTrayMenu(running, canStart));
-  tray.setToolTip(running ? 'Zapret App — обход включён' : 'Zapret App — обход выключен');
+  tray.setContextMenu(buildTrayMenu());
+  tray.setToolTip(trayTooltip());
 }
 
-function buildTrayMenu(running: boolean, canStart: boolean): Menu {
+function buildTrayMenu(): Menu {
+  const { running, canStart, strategy } = trayMenuState;
+  const tgRunning = tgwsProxy.isRunning();
+  const tg = tgwsProxy.getConfig();
+  const strategyLabel = strategy ? strategy.replace(/\.bat$/i, '') : 'конфиг не выбран';
+
   return Menu.buildFromTemplate([
-    { label: 'Открыть', click: () => mainWindow?.show() },
+    { label: 'Открыть Skvoz', click: () => focusMainWindow() },
     { type: 'separator' },
+    { label: `Zapret: ${running ? 'включён' : 'выключен'} · ${strategyLabel}`, enabled: false },
+    running
+      ? { label: 'Выключить обход', click: () => void traySetBypass(false) }
+      : { label: 'Включить обход', enabled: canStart, click: () => void traySetBypass(true) },
+    { label: 'Перезапустить обход', enabled: running, click: () => void trayRestartBypass() },
+    { type: 'separator' },
+    { label: `Telegram proxy: ${tgRunning ? `работает · ${tg.host}:${tg.port}` : 'выключен'}`, enabled: false },
     {
-      label: 'Включить zapret',
-      enabled: canStart,
-      click: () => void traySetBypass(true),
+      label: tgRunning ? 'Выключить прокси' : 'Включить прокси',
+      click: () => void traySetTgws(!tgRunning),
     },
     {
-      label: 'Выключить zapret',
-      enabled: running,
-      click: () => void traySetBypass(false),
+      label: 'Скопировать ссылку прокси',
+      click: () => {
+        const link = tgwsProxy.buildProxyLink();
+        if (link) clipboard.writeText(link);
+      },
     },
     { type: 'separator' },
     {
@@ -471,6 +739,57 @@ function buildTrayMenu(running: boolean, canStart: boolean): Menu {
       },
     },
   ]);
+}
+
+async function traySetTgws(enable: boolean): Promise<void> {
+  try {
+    if (enable) await tgwsProxy.start();
+    else await tgwsProxy.stop();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`[TG] ${message}`, 'error');
+    notify('Telegram proxy не запустился', message);
+  }
+  void refreshTrayMenu();
+}
+
+/** Системное уведомление — только когда окно скрыто, иначе хватает тостов. */
+function notify(title: string, body: string): void {
+  if (mainWindow?.isVisible() && mainWindow.isFocused()) return;
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({ title, body, icon: loadAppIcon(64) });
+  notification.on('click', () => focusMainWindow());
+  notification.show();
+}
+
+async function trayRestartBypass(): Promise<void> {
+  try {
+    const zapretPath = await requireZapretPath();
+    const status = await getStatus(zapretPath);
+    const strategy = config.selectedStrategy ?? status.selectedStrategy;
+    if (!strategy || !status.strategies.includes(strategy)) {
+      throw new Error('Стратегия не выбрана');
+    }
+    sendToolOutput('Перезапуск обхода из трея...', 'info');
+    if (status.bypass.running) {
+      await stopBypass((line) => sendToolOutput(line.text, line.level));
+      await delay(600);
+    }
+    await startBypass(zapretPath, strategy, (line) => sendToolOutput(line.text, line.level));
+    const started = await waitForBypassRunning();
+    if (!started) {
+      throw new Error('winws.exe не запустился. Запустите приложение от администратора.');
+    }
+    clearBypassStoppedByUser();
+    markBypassExpectedRunning(true);
+    sendToolOutput('[OK] Обход перезапущен', 'success');
+    mainWindow?.webContents.send('bypass-auto-started');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Ошибка: ${message}`, 'warn');
+  } finally {
+    await refreshTrayMenu(true);
+  }
 }
 
 async function traySetBypass(enable: boolean): Promise<void> {
@@ -495,9 +814,17 @@ async function traySetBypass(enable: boolean): Promise<void> {
 
       const active = await verifyBypassRunning();
       sendToolOutput(`[OK] Обход включён (PID ${active.pid ?? '?'})`, 'success');
+      clearBypassStoppedByUser();
+      markBypassExpectedRunning(true);
     } else {
+      markBypassStoppedByUser();
+      markBypassExpectedRunning(false);
       sendToolOutput('Остановка обхода из трея...', 'info');
       await stopBypass((line) => sendToolOutput(line.text, line.level));
+      const still = await verifyBypassRunning();
+      if (still.running) {
+        throw new Error(`winws.exe всё ещё работает (PID ${still.pid ?? '?'}). Запустите от администратора.`);
+      }
       sendToolOutput('[OK] Обход выключен', 'success');
     }
 
@@ -511,10 +838,26 @@ async function traySetBypass(enable: boolean): Promise<void> {
 }
 
 function sanitizeSelectedStrategy(zapretPath: string): void {
-  if (!config.selectedStrategy) return;
-  if (!fs.existsSync(path.join(zapretPath, config.selectedStrategy))) {
+  if (config.selectedStrategy && !fs.existsSync(path.join(zapretPath, config.selectedStrategy))) {
     config.selectedStrategy = null;
-    saveConfig(config);
+  }
+
+  if (!config.selectedStrategy) {
+    // Только официальные .bat из папки zapret: general.bat, иначе первый по списку.
+    try {
+      const strategies = listStrategies(zapretPath);
+      const preferred =
+        strategies.find((s) => s === 'general.bat') ??
+        strategies.find((s) => s.toLowerCase() !== 'service.bat') ??
+        strategies[0] ??
+        null;
+      if (preferred) {
+        config.selectedStrategy = preferred;
+        saveConfig(config);
+      }
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -558,17 +901,30 @@ async function tryResolveZapretPath(options: { allowScan?: boolean } = {}): Prom
   return null;
 }
 
-async function loadDashboardState(options: { light?: boolean } = {}): Promise<{
+async function loadDashboardState(options: { light?: boolean; fresh?: boolean } = {}): Promise<{
   config: AppConfig;
   status: Awaited<ReturnType<typeof getEmptyStatus>>;
 }> {
+  if (!options.light && Date.now() - launchAtStartupSyncedAt > LAUNCH_SYNC_MS) {
+    launchAtStartupSyncedAt = Date.now();
+    try {
+      const launchAtStartupActual = await isLaunchAtStartupEnabled();
+      if (config.launchAtStartup !== launchAtStartupActual) {
+        config.launchAtStartup = launchAtStartupActual;
+        saveConfig(config);
+      }
+    } catch {
+      /* сверка автозапуска не должна ломать загрузку панели */
+    }
+  }
+
   const zapretPath = getKnownZapretPath();
   if (!zapretPath) {
     return { config, status: getEmptyStatus() };
   }
 
   sanitizeSelectedStrategy(zapretPath);
-  const status = await getStatus(zapretPath, { light: options.light });
+  const status = await getStatus(zapretPath, { light: options.light, fresh: options.fresh });
   if (config.selectedStrategy && status.strategies.includes(config.selectedStrategy)) {
     status.selectedStrategy = config.selectedStrategy;
   }
@@ -632,13 +988,50 @@ async function isAutoPickPending(): Promise<boolean> {
   }
 }
 
-async function runPickBestStrategyJob(): Promise<{
+interface PickJobResult {
   cancelled: boolean;
   strategy: string | null;
   score: number;
   okChecks: number;
   totalChecks: number;
-}> {
+  /** лучший из проверенных до отмены — пользователь может применить его сам */
+  partialBest: string | null;
+}
+
+interface LastTestResults extends TestResultPayload {
+  at: string;
+}
+
+function lastTestResultsPath(): string {
+  return path.join(app.getPath('userData'), 'last-test.json');
+}
+
+function saveLastTestResults(payload: TestResultPayload): void {
+  try {
+    const record: LastTestResults = { ...payload, at: new Date().toISOString() };
+    fs.writeFileSync(lastTestResultsPath(), JSON.stringify(record, null, 2), 'utf8');
+  } catch {
+    /* результаты — только для удобства */
+  }
+}
+
+function loadLastTestResults(): LastTestResults | null {
+  try {
+    return JSON.parse(fs.readFileSync(lastTestResultsPath(), 'utf8')) as LastTestResults;
+  } catch {
+    return null;
+  }
+}
+
+async function runPickBestStrategyJob(options: { quick?: boolean } = {}): Promise<PickJobResult> {
+  const none: PickJobResult = {
+    cancelled: false,
+    strategy: null,
+    score: 0,
+    okChecks: 0,
+    totalChecks: 0,
+    partialBest: null,
+  };
   const zapretPath = await tryResolveZapretPath();
   if (!zapretPath) {
     throw new Error('Zapret не найден');
@@ -650,13 +1043,7 @@ async function runPickBestStrategyJob(): Promise<{
   if (status.strategies.length === 1) {
     config.selectedStrategy = status.strategies[0];
     saveConfig(config);
-    return {
-      cancelled: false,
-      strategy: config.selectedStrategy,
-      score: 0,
-      okChecks: 0,
-      totalChecks: 0,
-    };
+    return { ...none, strategy: config.selectedStrategy };
   }
 
   if (!isWindowsAdmin()) {
@@ -668,18 +1055,23 @@ async function runPickBestStrategyJob(): Promise<{
   autoPickBestStrategyRunning = true;
 
   try {
-    const best = await pickBestStrategyForRoot(
+    const outcome = await pickBestStrategyForRoot(
       zapretPath,
       (line) => sendToolOutput(line.text, line.level),
       {
         emitUiEvents: true,
+        quick: options.quick,
         shouldCancel: () => pickBestStrategyCancelRequested,
       }
     );
+    if (outcome.rankings.length > 0) {
+      saveLastTestResults({ ...outcome, quick: !!options.quick });
+    }
 
-    if (pickBestStrategyCancelRequested) {
+    const best = outcome.best;
+    if (outcome.cancelled) {
       await applyDefaultStrategyFallback(zapretPath);
-      return { cancelled: true, strategy: null, score: 0, okChecks: 0, totalChecks: 0 };
+      return { ...none, cancelled: true, partialBest: best?.strategy ?? null };
     }
 
     if (best?.strategy && status.strategies.includes(best.strategy)) {
@@ -692,7 +1084,7 @@ async function runPickBestStrategyJob(): Promise<{
         totalChecks: best.totalChecks,
       });
       return {
-        cancelled: false,
+        ...none,
         strategy: best.strategy,
         score: best.score,
         okChecks: best.okChecks,
@@ -701,13 +1093,7 @@ async function runPickBestStrategyJob(): Promise<{
     }
 
     await applyDefaultStrategyFallback(zapretPath);
-    return { cancelled: false, strategy: config.selectedStrategy, score: 0, okChecks: 0, totalChecks: 0 };
-  } catch (error) {
-    if (error instanceof PickBestStrategyCancelledError || pickBestStrategyCancelRequested) {
-      await applyDefaultStrategyFallback(zapretPath);
-      return { cancelled: true, strategy: null, score: 0, okChecks: 0, totalChecks: 0 };
-    }
-    throw error;
+    return { ...none, strategy: config.selectedStrategy };
   } finally {
     autoPickBestStrategyRunning = false;
     pickBestStrategyCancelRequested = false;
@@ -723,6 +1109,7 @@ async function runPostBootstrapTasks(): Promise<void> {
 
 async function tryAutoStartBypass(): Promise<void> {
   if (!config.autoStartBypass) return;
+  if (config.bypassStoppedByUser) return;
   if (autoStartBypassInFlight) {
     await autoStartBypassInFlight;
     return;
@@ -762,6 +1149,8 @@ async function tryAutoStartBypass(): Promise<void> {
 
       const running = await verifyBypassRunning();
       sendToolOutput(`[OK] Обход запущен автоматически (PID ${running.pid ?? '?'})`, 'success');
+      clearBypassStoppedByUser();
+      markBypassExpectedRunning(true);
       mainWindow?.webContents.send('bypass-auto-started');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -779,7 +1168,7 @@ async function tryAutoStartBypass(): Promise<void> {
 }
 
 function shouldNotifyAppUpdate(info: AppUpdateStatus): boolean {
-  if (info.upToDate || !info.latest) return false;
+  if (info.checkFailed || info.upToDate || !info.latest) return false;
   if (config.dismissedAppVersion && config.dismissedAppVersion === info.latest) return false;
   return true;
 }
@@ -803,26 +1192,49 @@ function registerIpc(): void {
 
   ipcMain.handle('get-config', () => config);
 
+  ipcMain.handle('set-auto-update-zapret', (_e, enabled: boolean) => {
+    config.autoUpdateZapret = !!enabled;
+    saveConfig(config);
+    if (config.autoUpdateZapret) void autoUpdateZapret();
+    return { autoUpdateZapret: config.autoUpdateZapret };
+  });
+
+  ipcMain.handle('show-main-window', () => {
+    trayWindow?.hide();
+    focusMainWindow();
+    return { ok: true };
+  });
+
+  ipcMain.handle('set-minimize-to-tray', (_e, enabled: boolean) => {
+    config.minimizeToTray = !!enabled;
+    saveConfig(config);
+    return { minimizeToTray: config.minimizeToTray };
+  });
+
   ipcMain.handle('get-dashboard-state', async (_e, options?: { light?: boolean }) =>
     loadDashboardState(options ?? {})
   );
 
-  ipcMain.handle('set-theme', (_e, theme: 'dark' | 'light') => {
-    config.theme = theme === 'light' ? 'light' : 'dark';
-    saveConfig(config);
-    mainWindow?.setBackgroundColor(windowBackground(config.theme));
-    return { theme: config.theme };
-  });
-
   ipcMain.handle('set-launch-at-startup', async (_e, enabled: boolean) => {
     config.launchAtStartup = !!enabled;
     saveConfig(config);
-    await applyLaunchAtStartup(config.launchAtStartup);
+    try {
+      await applyLaunchAtStartup(config.launchAtStartup);
+    } catch (error) {
+      config.launchAtStartup = await isLaunchAtStartupEnabled();
+      saveConfig(config);
+      throw error;
+    }
+    config.launchAtStartup = await isLaunchAtStartupEnabled();
+    saveConfig(config);
     return { launchAtStartup: config.launchAtStartup };
   });
 
   ipcMain.handle('set-auto-start-bypass', async (_e, enabled: boolean) => {
     config.autoStartBypass = !!enabled;
+    if (config.autoStartBypass) {
+      config.bypassStoppedByUser = false;
+    }
     if (config.autoStartBypass && !config.launchAtStartup) {
       config.launchAtStartup = true;
       await applyLaunchAtStartup(true);
@@ -830,6 +1242,7 @@ function registerIpc(): void {
     saveConfig(config);
     if (config.autoStartBypass) {
       autoStartBypassAttempted = false;
+      postBootstrapCompleted = false;
       void runPostBootstrapTasks();
     }
     return {
@@ -849,12 +1262,14 @@ function registerIpc(): void {
 
   ipcMain.handle('get-auto-pick-pending', async () => ({ pending: await isAutoPickPending() }));
 
-  ipcMain.handle('run-pick-best-strategy', async () => {
+  ipcMain.handle('run-pick-best-strategy', async (_e, options?: { quick?: boolean }) => {
     if (autoPickBestStrategyRunning) {
       throw new Error('Подбор конфига уже выполняется');
     }
-    return runPickBestStrategyJob();
+    return runPickBestStrategyJob({ quick: !!options?.quick });
   });
+
+  ipcMain.handle('get-last-test-results', () => loadLastTestResults());
 
   ipcMain.handle('cancel-pick-best-strategy', () => {
     pickBestStrategyCancelRequested = true;
@@ -893,7 +1308,9 @@ function registerIpc(): void {
       title: 'Выберите папку zapret-discord-youtube',
       properties: ['openDirectory'],
     });
-    if (result.canceled || result.filePaths.length === 0) return config;
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true as const, config };
+    }
 
     const chosen = result.filePaths[0];
     const nested = fs.existsSync(path.join(chosen, 'bin', 'winws.exe'))
@@ -922,6 +1339,7 @@ function registerIpc(): void {
     config.skipAutoBootstrap = false;
     autoPickBestStrategyAttempted = false;
     autoStartBypassAttempted = false;
+    postBootstrapCompleted = false;
     saveConfig(config);
 
     bootstrapState = {
@@ -937,14 +1355,23 @@ function registerIpc(): void {
 
     void runPostBootstrapTasks();
 
-    return config;
+    return { canceled: false as const, config };
   });
 
-  ipcMain.handle('set-strategy', (_e, strategy: string) => {
+  ipcMain.handle('set-strategy', async (_e, strategy: string) => {
+    const zapretPath = getKnownZapretPath();
+    if (zapretPath) {
+      const strategies = listStrategies(zapretPath);
+      if (!strategies.includes(strategy)) {
+        throw new Error(`Конфиг не найден: ${strategy}`);
+      }
+    }
     config.selectedStrategy = strategy;
     saveConfig(config);
     return config;
   });
+
+  ipcMain.handle('get-bypass-state', async () => verifyBypassRunning());
 
   ipcMain.handle('get-status', async () => {
     const zapretPath = getKnownZapretPath();
@@ -975,18 +1402,52 @@ function registerIpc(): void {
       sendToolOutput('Предупреждение: сборка не помечена как официальная', 'warn');
     }
     await startBypass(zapretPath, strategy, (line) => sendToolOutput(line.text, line.level));
-    await delay(1500);
+    await delay(900);
     const running = await verifyBypassRunning();
     if (!running.running) {
       throw new Error('winws.exe не запустился или сразу завершился. Запустите от администратора.');
     }
     sendToolOutput(`[OK] winws.exe запущен (PID ${running.pid ?? '?'})`, 'success');
+    clearBypassStoppedByUser();
+    markBypassExpectedRunning(true);
+    await refreshTrayMenu(true);
+    return { ok: true };
+  });
+
+  ipcMain.handle('restart-bypass', async () => {
+    const zapretPath = await requireZapretPath();
+    const status = await getStatus(zapretPath);
+    const strategy = config.selectedStrategy ?? status.selectedStrategy;
+    if (!strategy) throw new Error('Стратегия не выбрана');
+    if (!status.strategies.includes(strategy)) {
+      throw new Error(`Стратегия не найдена: ${strategy}`);
+    }
+    sendToolOutput('Перезапуск обхода...', 'info');
+    if (status.bypass.running) {
+      await stopBypass((line) => sendToolOutput(line.text, line.level));
+      await delay(600);
+    }
+    await startBypass(zapretPath, strategy, (line) => sendToolOutput(line.text, line.level));
+    await delay(900);
+    const running = await verifyBypassRunning();
+    if (!running.running) {
+      throw new Error('winws.exe не запустился после перезапуска. Запустите от администратора.');
+    }
+    sendToolOutput(`[OK] Обход перезапущен (PID ${running.pid ?? '?'})`, 'success');
+    clearBypassStoppedByUser();
+    markBypassExpectedRunning(true);
     await refreshTrayMenu(true);
     return { ok: true };
   });
 
   ipcMain.handle('stop-bypass', async () => {
+    markBypassStoppedByUser();
+    markBypassExpectedRunning(false);
     await stopBypass((line) => sendToolOutput(line.text, line.level));
+    const still = await verifyBypassRunning();
+    if (still.running) {
+      throw new Error(`winws.exe всё ещё работает (PID ${still.pid ?? '?'}). Запустите от администратора.`);
+    }
     await refreshTrayMenu(true);
     return { ok: true };
   });
@@ -1029,12 +1490,46 @@ function registerIpc(): void {
 
   ipcMain.handle('set-game-filter', async (_e, mode: SettingsState['gameFilter']) => {
     setGameFilter(await requireZapretPath(), mode);
+    invalidateStatusCache();
     return { ok: true };
   });
 
   ipcMain.handle('toggle-ipset', async () => {
     const ipset = toggleIpset(await requireZapretPath());
+    invalidateStatusCache();
     return { ok: true, ipset };
+  });
+
+  ipcMain.handle('set-ipset-mode', async (_e, mode: IpsetMode) => {
+    const ipset = setIpsetModeForRoot(await requireZapretPath(), mode);
+    invalidateStatusCache();
+    return { ok: true, ipset };
+  });
+
+  ipcMain.handle('update-ipset-list', async () => {
+    const root = await requireZapretPath();
+    await updateIpsetList(root, (line) => sendToolOutput(line.text, line.level));
+    invalidateStatusCache();
+    return { ok: true };
+  });
+
+  ipcMain.handle('update-hosts-file', async () => {
+    const result = await updateHostsFile((line) => sendToolOutput(line.text, line.level));
+    return { ok: true, ...result };
+  });
+
+  ipcMain.handle('list-fake-bins', async () => listFakeBins(await requireZapretPath()));
+
+  ipcMain.handle('replace-active-fake', async (_e, type: 'discord' | 'game', fakeFileName: string) => {
+    const name = replaceActiveFake(await requireZapretPath(), type, fakeFileName);
+    invalidateStatusCache();
+    return { ok: true, name };
+  });
+
+  ipcMain.handle('remove-zapret-services', async () => {
+    await removeWindowsServices((line) => sendToolOutput(line.text, line.level));
+    invalidateStatusCache();
+    return { ok: true };
   });
 
   ipcMain.handle('get-user-lists', async () => readUserLists(await requireZapretPath()));
@@ -1051,6 +1546,7 @@ function registerIpc(): void {
 
   ipcMain.handle('set-check-updates', async (_e, enabled: boolean) => {
     setCheckUpdates(await requireZapretPath(), enabled);
+    invalidateStatusCache();
     return { ok: true };
   });
 
@@ -1155,6 +1651,8 @@ function registerIpc(): void {
     mainWindow?.webContents.send('bootstrap-complete', bootstrapState);
 
     autoPickBestStrategyAttempted = false;
+    autoStartBypassAttempted = false;
+    postBootstrapCompleted = false;
     void runPostBootstrapTasks();
 
     return result;
@@ -1180,6 +1678,43 @@ function registerIpc(): void {
         'Не удалось запросить права администратора. Подтвердите запрос UAC или закройте приложение и запустите его через правую кнопку мыши → «Запуск от имени администратора».'
       );
     }
+    return { ok: true };
+  });
+
+  // ── tg-ws-proxy IPC handlers ──────────────────────────────────────────
+
+  ipcMain.handle('tgws-get-config', () => tgwsProxy.getConfig());
+
+  ipcMain.handle('tgws-set-config', async (_e, updates: Partial<TgwsProxyConfig>) => {
+    await tgwsProxy.setConfig(updates);
+    return { ok: true };
+  });
+
+  ipcMain.handle('tgws-start', async () => {
+    await tgwsProxy.start();
+    return { ok: true };
+  });
+
+  ipcMain.handle('tgws-stop', async () => {
+    await tgwsProxy.stop();
+    return { ok: true };
+  });
+
+  ipcMain.handle('tgws-status', () => ({
+    running: tgwsProxy.isRunning(),
+    config: tgwsProxy.getConfig(),
+    stats: tgwsProxy.getStats(),
+    proxyLink: tgwsProxy.buildProxyLink(),
+  }));
+
+  ipcMain.handle('check-access', () =>
+    checkAccess({ running: tgwsProxy.isRunning(), config: tgwsProxy.getConfig() })
+  );
+
+  ipcMain.handle('tgws-proxy-link', () => tgwsProxy.buildProxyLink());
+
+  ipcMain.handle('open-external', async (_e, url: string) => {
+    await shell.openExternal(url);
     return { ok: true };
   });
 }
@@ -1217,27 +1752,30 @@ if (!gotSingleInstanceLock) {
     focusMainWindow();
   });
 
-  if (elevateIfNeeded()) {
-    app.releaseSingleInstanceLock();
-    setTimeout(() => app.exit(0), 400);
-  } else {
-    app.whenReady().then(async () => {
-      createTray();
-      createWindow();
-      scheduleTraySync();
+  app.whenReady().then(async () => {
+    createTray();
+    createWindow();
+    scheduleTraySync();
 
-      if (isStartupLaunch()) {
-        void runStartupTasks().finally(() => scheduleAppUpdateCheck(60_000));
-      }
+    if (isStartupLaunch()) {
+      void runStartupTasks().finally(() => scheduleAppUpdateCheck(60_000));
+    }
 
-      void syncLaunchAtStartup(config.launchAtStartup);
+    void syncLaunchAtStartup(config.launchAtStartup);
+    initBypassWatchdog();
+    initTgwsProxy();
+    scheduleZapretAutoUpdate();
 
-      app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-        else mainWindow?.show();
-      });
+    app.on('before-quit', () => {
+      stopBypassWatchdog();
+      void tgwsProxy.stop();
     });
-  }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      else mainWindow?.show();
+    });
+  });
 }
 
 app.on('window-all-closed', () => {

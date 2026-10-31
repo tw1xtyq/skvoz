@@ -57,7 +57,7 @@ export function humanizeError(err: unknown, fallbackTitle = 'Что-то пош�
     return {
       title: 'Нужны права администратора',
       message: raw.length > 160 ? 'Для этой операции нужны права администратора.' : raw,
-      hint: 'Запустите Zapret App от имени администратора и подтвердите UAC.',
+      hint: 'Запустите Skvoz от имени администратора и подтвердите UAC.',
     };
   }
 
@@ -72,7 +72,7 @@ export function humanizeError(err: unknown, fallbackTitle = 'Что-то пош�
   return {
     title: fallbackTitle,
     message: raw || 'Произошла неизвестная ошибка.',
-    hint: 'Подробности записаны в журнал внизу окна.',
+    hint: 'Подробности в журнале.',
   };
 }
 
@@ -103,22 +103,43 @@ export function toast(message: string, type: ToastType = 'info'): void {
   if (!root) return;
 
   const text = message.trim();
+  // Одинаковый тост уже на экране — не плодим копии
+  for (const existing of Array.from(root.children) as HTMLElement[]) {
+    if (existing.textContent === text && !existing.classList.contains('hide')) return;
+  }
+  // Не больше 4 одновременно: убираем самый старый
+  const alive = Array.from(root.children).filter((node) => !node.classList.contains('hide'));
+  if (alive.length >= 4) alive[0].dispatchEvent(new Event('dismiss'));
+
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
   el.textContent = text;
-  if (text.length > 96) {
-    el.title = text;
-  }
+  el.title = text.length > 96 ? `${text}
+
+Нажмите, чтобы закрыть` : 'Нажмите, чтобы закрыть';
   root.appendChild(el);
 
   const duration = Math.min(5200, Math.max(3200, 2200 + text.length * 18));
-
-  requestAnimationFrame(() => el.classList.add('show'));
-  window.setTimeout(() => {
+  let timer = 0;
+  const dismiss = (): void => {
+    if (el.classList.contains('hide')) return;
+    window.clearTimeout(timer);
     el.classList.remove('show');
     el.classList.add('hide');
     window.setTimeout(() => el.remove(), 320);
-  }, duration);
+  };
+  const arm = (ms: number): void => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(dismiss, ms);
+  };
+
+  el.addEventListener('dismiss', dismiss);
+  el.addEventListener('click', dismiss);
+  el.addEventListener('mouseenter', () => window.clearTimeout(timer));
+  el.addEventListener('mouseleave', () => arm(1600));
+
+  requestAnimationFrame(() => el.classList.add('show'));
+  arm(duration);
 }
 
 export function showErrorModal(err: unknown, fallbackTitle?: string): void {
@@ -170,7 +191,7 @@ export function confirmModal(title: string, message: string, hint?: string): Pro
     const okBtn = document.getElementById('modalOk') as HTMLButtonElement | null;
     const cancelBtn = document.getElementById('modalCancel') as HTMLButtonElement | null;
     if (!overlay || !titleEl || !bodyEl || !okBtn || !cancelBtn) {
-      resolve(true);
+      resolve(false);
       return;
     }
 
@@ -244,6 +265,37 @@ export function showInfoModal(title: string, message: string, hint?: string): vo
   closeBtn.addEventListener('click', onClose);
   overlay.addEventListener('click', onBackdrop);
   document.addEventListener('keydown', onKeydown);
+}
+
+export function bindOverlayDismiss(
+  overlay: HTMLElement,
+  onDismiss: () => void,
+  options?: { closeButton?: HTMLElement | null }
+): () => void {
+  openOverlay(overlay);
+
+  const cleanup = () => {
+    closeOverlay(overlay, () => {
+      options?.closeButton?.removeEventListener('click', onDismissClick);
+      overlay.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKeydown);
+      onDismiss();
+    });
+  };
+
+  const onDismissClick = () => cleanup();
+  const onBackdrop = (event: MouseEvent) => {
+    if (event.target === overlay) cleanup();
+  };
+  const onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') cleanup();
+  };
+
+  options?.closeButton?.addEventListener('click', onDismissClick);
+  overlay.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKeydown);
+
+  return cleanup;
 }
 
 export function initUi(): void {

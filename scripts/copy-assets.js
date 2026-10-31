@@ -24,7 +24,7 @@ function copyDir(source, target) {
 
 fs.mkdirSync(destDir, { recursive: true });
 
-for (const file of ['index.html', 'styles.css', 'theme-init.js']) {
+for (const file of ['index.html', 'tray.html', 'styles.css']) {
   fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
 }
 

@@ -1,8 +1,17 @@
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { assertAdmin } from './admin';
 import type { OutputCallback } from './diagnostics';
+import {
+  assertWinwsRunningAfterLaunch,
+  ensureRequiredLists,
+  ensureStrategyBins,
+  ensureWinwsStopped,
+  validateStrategyAssets,
+} from './bypass-prep';
 import { unblockZapretInstall } from './downloader';
+import { ensureUserListFiles } from './user-lists';
 import { runDetachedHidden, runHidden } from './exec';
 
 function readGameFilterPorts(root: string): { tcp: string; udp: string } {
@@ -25,6 +34,12 @@ function parseCommandLine(input: string): string[] {
 
   for (let i = 0; i < input.length; i += 1) {
     const ch = input[i];
+    // как в cmd: ^ вне кавычек экранирует следующий символ (--dpi-desync-fake-tls=^! → !)
+    if (ch === '^' && !inQuotes && i + 1 < input.length) {
+      current += input[i + 1];
+      i += 1;
+      continue;
+    }
     if (ch === '"') {
       inQuotes = !inQuotes;
       continue;
@@ -43,7 +58,7 @@ function parseCommandLine(input: string): string[] {
   return args;
 }
 
-function extractWinwsLaunch(
+export function extractWinwsLaunch(
   root: string,
   strategyFile: string
 ): { exe: string; args: string[]; argString: string } {
@@ -80,19 +95,52 @@ function extractWinwsLaunch(
   return { exe, args: parseCommandLine(argString), argString };
 }
 
-async function prepareBypass(root: string, out?: OutputCallback): Promise<void> {
-  out?.({ text: 'Подготовка окружения...', level: 'info' });
+async function runCmdOutput(command: string, args: string[], timeoutMs = 8_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error(`Таймаут: ${command}`));
+    }, timeoutMs);
+
+    child.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      resolve(stdout);
+    });
+  });
+}
+
+async function ensureTcpTimestamps(out?: OutputCallback): Promise<void> {
+  try {
+    const status = await runCmdOutput('netsh', ['interface', 'tcp', 'show', 'global']);
+    if (/timestamps\s*:\s*enabled/i.test(status)) return;
+  } catch {
+    /* try to enable below */
+  }
 
   await runHidden('netsh', ['interface', 'tcp', 'set', 'global', 'timestamps=enabled'], {
     onLine: (line) => out?.(line),
-    timeoutMs: 20_000,
+    timeoutMs: 8_000,
   });
+}
 
-  await runHidden('cmd.exe', ['/c', 'call service.bat load_game_filter && call service.bat load_user_lists'], {
-    cwd: root,
-    onLine: (line) => out?.(line),
-    timeoutMs: 30_000,
-  });
+async function prepareBypass(root: string, out?: OutputCallback): Promise<void> {
+  out?.({ text: 'Подготовка окружения...', level: 'info' });
+  ensureUserListFiles(root);
+  ensureRequiredLists(root);
+  const restoredBins = ensureStrategyBins(root);
+  if (restoredBins.length > 0) {
+    out?.({ text: `Подготовлены bin: ${restoredBins.join(', ')}`, level: 'info' });
+  }
+  await ensureTcpTimestamps(out);
 }
 
 export async function startBypassHidden(root: string, strategyFile: string, out?: OutputCallback): Promise<void> {
@@ -103,15 +151,17 @@ export async function startBypassHidden(root: string, strategyFile: string, out?
   }
 
   out?.({ text: `Подготовка ${strategyFile}...`, level: 'info' });
-  await unblockZapretInstall(root);
-  await prepareBypass(root, out);
+  await Promise.all([unblockZapretInstall(root), prepareBypass(root, out)]);
 
   const launch = extractWinwsLaunch(root, strategyFile);
   if (!fs.existsSync(launch.exe)) {
     throw new Error(`winws.exe не найден: ${launch.exe}`);
   }
+  validateStrategyAssets(launch.args);
 
+  await ensureWinwsStopped();
   out?.({ text: `Запуск winws.exe (${strategyFile})...`, level: 'info' });
   await runDetachedHidden(launch.exe, launch.args, path.dirname(launch.exe));
+  await assertWinwsRunningAfterLaunch();
   out?.({ text: '[OK] Обход запущен', level: 'success' });
 }

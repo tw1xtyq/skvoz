@@ -17,14 +17,26 @@ function execPath(): string {
   return process.execPath;
 }
 
+/**
+ * runHidden без onLine бросает исключение на ненулевом коде, а для schtasks
+ * «задача не найдена» — обычный ответ, а не ошибка.
+ */
+async function schtasks(args: string[]): Promise<number> {
+  try {
+    return await runHidden('schtasks.exe', args, { timeoutMs: 15_000 });
+  } catch {
+    return 1;
+  }
+}
+
 async function isScheduledTaskRegistered(): Promise<boolean> {
-  const code = await runHidden('schtasks.exe', ['/Query', '/TN', AUTOSTART_TASK_NAME]);
+  const code = await schtasks(['/Query', '/TN', AUTOSTART_TASK_NAME]);
   return code === 0;
 }
 
 async function registerScheduledTask(): Promise<void> {
   const exe = execPath();
-  const code = await runHidden('schtasks.exe', [
+  const code = await schtasks([
     '/Create',
     '/TN',
     AUTOSTART_TASK_NAME,
@@ -42,7 +54,7 @@ async function registerScheduledTask(): Promise<void> {
 }
 
 async function unregisterScheduledTask(): Promise<void> {
-  const code = await runHidden('schtasks.exe', ['/Delete', '/TN', AUTOSTART_TASK_NAME, '/F']);
+  const code = await schtasks(['/Delete', '/TN', AUTOSTART_TASK_NAME, '/F']);
   if (code !== 0 && (await isScheduledTaskRegistered())) {
     throw new Error('Не удалось удалить задачу автозапуска из планировщика Windows');
   }
