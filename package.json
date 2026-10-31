@@ -1,6 +1,6 @@
 {
   "name": "zapret-app",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "Skvoz — пульт для zapret и Telegram-прокси",
   "main": "dist/main/main.js",
   "author": "ProtheticGlitch",
