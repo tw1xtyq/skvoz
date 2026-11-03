@@ -6,10 +6,10 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 
 ## Скачать
 
-**Версия 1.11.0:**
+**Версия 1.11.1:**
 
-- [**Skvoz-Setup-1.11.0.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.0/Skvoz-Setup-1.11.0.exe) — установщик (рекомендуется)
-- [**Skvoz-1.11.0-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.0/Skvoz-1.11.0-Portable.exe) — без установки, один файл
+- [**Skvoz-Setup-1.11.1.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.1/Skvoz-Setup-1.11.1.exe) — установщик (рекомендуется)
+- [**Skvoz-1.11.1-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.1/Skvoz-1.11.1-Portable.exe) — без установки, один файл
 
 Все версии и список изменений — на странице [Releases](https://github.com/tw1xtyq/skvoz/releases).
 
@@ -35,7 +35,8 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 | **Telegram** | Кнопка запуска прокси, адрес, порт, секрет и ссылка для клиента |
 | **VPN** | Кнопка подключения, бесплатный VPN одной кнопкой, свой конфиг AmneziaWG |
 | **Настройки** | Вкладки: Запуск, Автоматика, Фильтры, Свои списки, Обновления |
-| **Сервис** | Диагностика, статус winws, отчёт для баг-репорта, журнал, удаление, о программе |
+| **Сервис** | Диагностика, статус winws, отчёт для баг-репорта, журнал, удаление |
+| **О Skvoz** | Версия, релизы, инструкция, авторы и лицензии |
 
 ## Трей
 
@@ -149,7 +150,7 @@ Zapret скачивается в `C:\ProgramData\Skvoz`, поэтому обно
 
 | Клавиши | Действие |
 |---------|----------|
-| Ctrl+1…6 | Главная, Обход, Telegram, VPN, Настройки, Сервис |
+| Ctrl+1…7 | Главная, Обход, Telegram, VPN, Настройки, Сервис, О Skvoz |
 | ← → | Переключить вкладку настроек |
 | F5 / Ctrl+R | Обновить статус |
 | Esc | Закрыть диалог |

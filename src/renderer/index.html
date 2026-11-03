@@ -31,7 +31,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 19 6v5.5c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
         <b>Обход</b>
       </button>
-      <button class="side-nav-btn" id="navTelegram" type="button" data-view="telegram" data-hotkey="3" title="Ctrl+3 · Telegram proxy">
+      <button class="side-nav-btn" id="navTelegram" type="button" data-view="telegram" data-hotkey="3" title="Ctrl+3 · Telegram-прокси">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 4.5 3.5 11l6 2.2 2.2 6.3 3.1-4 4.2 3.1z"/><path d="m9.5 13.2 6.7-5.4"/></svg>
         <b>Telegram</b>
       </button>
@@ -43,9 +43,13 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
         <b>Настройки</b>
       </button>
-      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Инструменты, журнал и о программе">
+      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Диагностика, журнал и удаление">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 10 2.5 2L8 14M12.5 14H16"/></svg>
         <b>Сервис</b>
+      </button>
+      <button class="side-nav-btn" id="navAbout" type="button" data-view="about" data-hotkey="7" title="Ctrl+7 · О программе, авторы и лицензии">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></svg>
+        <b>О Skvoz</b>
       </button>
     </nav>
   </aside>
@@ -59,7 +63,7 @@
       <div class="topbar-actions">
         <button class="status-chip status-pill" id="statusBadge" type="button" data-goto="bypass" title="Обход">
           <span class="status-dot"></span>
-          <span id="statusText">Загрузка...</span>
+          <span id="statusText">Обход</span>
         </button>
         <button class="status-chip status-pill" id="statusTg" type="button" data-goto="telegram" title="Telegram proxy">
           <span class="status-dot"></span><span>Telegram</span>
@@ -797,8 +801,8 @@
           <p class="card-hint">Если zapret мешает или больше не нужен. Обычно это не требуется</p>
         </header>
         <div class="tool-grid tool-grid-2">
-          <div class="tool-cell">
-            <button class="btn btn-ghost btn-sm btn-danger-text" id="btnRemoveServices" type="button">Удалить службы</button>
+          <div class="tool-cell tool-cell-danger">
+            <button class="btn btn-danger btn-sm" id="btnRemoveServices" type="button">Удалить службы</button>
             <p class="tool-hint">Снять службы zapret и WinDivert</p>
           </div>
           <div class="tool-cell tool-cell-danger runtime-lock-group" id="fullRemoveGroup">
@@ -808,6 +812,10 @@
         </div>
       </section>
 
+    </section>
+
+    <!-- О программе -->
+    <section class="page" data-page="about">
       <section class="glass-card bento-card about-card">
         <header class="card-head card-head-stack">
           <div class="card-head-row">

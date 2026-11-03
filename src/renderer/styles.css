@@ -4546,3 +4546,21 @@ summary:focus-visible {
 .card-icon-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
 .card-icon-danger svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tool-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* Ячейка инструмента нажимается целиком. scale/transform на кнопке делают её опорой для ::after:
+   слой съёживался до текста прямо при нажатии, и отпускание «мимо» не засчитывалось как клик.
+   Поэтому кнопка не сжимается, а отклик на нажатие — у всей ячейки */
+.tool-cell .btn,
+.tool-cell .btn:active:not(:disabled),
+.tool-cell .btn:hover:not(:disabled) { scale: none; transform: none; filter: none; }
+.tool-cell {
+  transition: border-color 0.25s var(--ease), background-color 0.25s var(--ease), transform 0.25s var(--ease), scale 0.12s ease-out;
+}
+.tool-cell:active:not(:has(.btn:disabled)) { scale: 0.98; transition-duration: 0.25s, 0.25s, 0.25s, 0.06s; }
+/* нажатие на вкладку настроек — плавное, а не рывком */
+.settings-tabs button {
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), transform 0.12s ease-out;
+}
+/* внутри ячейки подсвечивается только сама ячейка, у кнопки своей плашки нет */
+.tool-cell .btn:hover:not(:disabled),
+.tool-cell .btn:active:not(:disabled) { background: none; border: 0; box-shadow: none; }

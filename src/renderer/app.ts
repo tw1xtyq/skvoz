@@ -1620,20 +1620,19 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   // classList, а не className: иначе слетают status-pill (кликабельность) и is-loading
   els.statusBadge.classList.toggle('running', running);
   els.statusBadge.classList.toggle('warning', !running && !(status.pathsValid && status.isOfficial));
-  els.statusBadge.title = running
-    ? `Обход включён${status.selectedStrategy ? ` · ${status.selectedStrategy.replace(/\.bat$/i, '')}` : ''}`
-    : 'Обход выключен — открыть страницу обхода';
+  els.statusBadge.title = !status.pathsValid
+    ? 'Zapret не найден — открыть страницу обхода'
+    : !status.isOfficial
+      ? 'Неофициальная сборка zapret — открыть страницу обхода'
+      : running
+        ? `Обход включён${status.selectedStrategy ? ` · ${status.selectedStrategy.replace(/\.bat$/i, '')}` : ''}`
+        : 'Обход выключен — открыть страницу обхода';
   document.body.classList.toggle('app-running', running);
 
   updatePowerButton(running, true);
 
-  const nextStatus = !status.pathsValid
-    ? 'Zapret не найден'
-    : !status.isOfficial
-      ? 'Неофициальный zapret'
-      : running
-        ? 'Обход включён'
-        : 'Обход выключен';
+  // подпись одна, как у чипов Telegram и VPN; состояние видно по точке и подсказке
+  const nextStatus = 'Обход';
   if (els.statusText.textContent !== nextStatus) {
     flashStatusText();
     els.statusText.textContent = nextStatus;
@@ -2389,7 +2388,7 @@ els.btnRestartAdmin?.addEventListener('click', () => {
 
 // ── App tabs ────────────────────────────────────────────────────────────────
 
-type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'tools';
+type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'tools' | 'about';
 
 const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
   home: ['Главная', 'Zapret, Telegram proxy и VPN в одном окне'],
@@ -2397,7 +2396,8 @@ const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
   telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
   vpn: ['VPN', 'AmneziaWG прямо из Skvoz'],
   settings: ['Настройки', 'Запуск, автоматика обхода, фильтры и обновления'],
-  tools: ['Сервис', 'Инструменты, журнал и о программе'],
+  tools: ['Сервис', 'Диагностика, журнал и удаление'],
+  about: ['О программе', 'Версия, ссылки, авторы и лицензии'],
 };
 
 function moveNavIndicator(): void {
@@ -2554,8 +2554,8 @@ document.addEventListener('keydown', (event) => {
   toast('Статус обновлён', 'info');
 });
 
-// Ctrl+1…6 — страницы
-const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'vpn', 'settings', 'tools'];
+// Ctrl+1…7 — страницы
+const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'vpn', 'settings', 'tools', 'about'];
 document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
   const index = Number(event.key) - 1;
