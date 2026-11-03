@@ -31,7 +31,8 @@ jobs:
           # fetch-vendor.js берёт последние релизы AmneziaWG и wgcf; токен снимает лимит GitHub API.
           # Своё имя переменной: увидев GITHUB_TOKEN, electron-builder начал бы сам публиковать релиз
           SKVOZ_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run pack
+        # Видя тег, electron-builder пытается публиковать сам — релиз создаёт следующий шаг
+        run: npm run pack -- --publish never
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
