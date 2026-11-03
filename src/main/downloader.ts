@@ -396,7 +396,27 @@ export function getInstallPath(installBase: string, version: string): string {
   return path.join(installBase, `zapret-discord-youtube-${version}`);
 }
 
+/** Папка установки упакованного приложения (там, где Skvoz.exe); в разработке — null */
+function packagedAppDir(): string | null {
+  const appRoot = path.join(__dirname, '..', '..');
+  return /\.asar$/i.test(appRoot) ? path.dirname(path.dirname(appRoot)) : null;
+}
+
+/** Лежит ли путь внутри папки установки — её установщик очищает при каждом обновлении */
+export function isInsideAppInstall(target: string): boolean {
+  const dir = packagedAppDir();
+  if (!dir || !target) return false;
+  const rel = path.relative(dir, target);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 export function getDefaultInstallBase(): string {
+  // Раньше zapret качался в resources рядом с app.asar, а установщик при обновлении
+  // переносит из папки установки все файлы — zapret вместе со списками пропадал.
+  // ProgramData всегда латиницей, а приложение и так работает от администратора.
+  if (packagedAppDir()) {
+    return path.join(process.env.ProgramData || 'C:\\ProgramData', 'Skvoz');
+  }
   const appRoot = path.join(__dirname, '..', '..');
   const parent = path.dirname(appRoot);
   if (/[^\x00-\x7F]/.test(parent)) {

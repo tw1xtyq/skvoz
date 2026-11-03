@@ -42,6 +42,82 @@ async function serviceRunning(name: string): Promise<boolean> {
   }
 }
 
+export type ServiceState = 'missing' | 'stopped' | 'stopping' | 'running' | 'unknown';
+
+/** Код состояния из `sc query` (вывод локализован, но «: 4 RUNNING» везде одинаковый) */
+export function parseScState(output: string): ServiceState {
+  if (/\b1060\b/.test(output)) return 'missing';
+  // строка TYPE (": 1 KERNEL_DRIVER") идёт раньше STATE — ищем именно названия состояний
+  const code = output.match(/:\s*(\d)\s+(?:STOPPED|START_PENDING|STOP_PENDING|RUNNING|CONTINUE_PENDING|PAUSE_PENDING|PAUSED)\b/)?.[1];
+  if (code === '1') return 'stopped';
+  if (code === '3') return 'stopping';
+  if (code === '4' || code === '2') return 'running';
+  return 'unknown';
+}
+
+/** Имена процессов из `tasklist /m WinDivert.dll /fo csv /nh`; при «нет задач» — пусто */
+export function parseModuleHolders(output: string): string[] {
+  const names = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const name = line.match(/^"([^"]+)","\d+"/)?.[1];
+    if (name) names.add(name);
+  }
+  return [...names];
+}
+
+async function serviceState(name: string): Promise<ServiceState> {
+  try {
+    return parseScState(await runCmd('sc', ['query', name]));
+  } catch (err) {
+    return parseScState(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function windivertHolders(): Promise<string[]> {
+  try {
+    return parseModuleHolders(await runCmd('tasklist', ['/m', 'WinDivert.dll', '/fo', 'csv', '/nh']));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * WinDivert остался загружен без winws — обычно после аварийного выхода. Сам драйвер
+ * помечает свою службу на удаление при загрузке, поэтому `sc delete` отвечает 1072
+ * или 1060 — это не ошибка; судим по итоговому состоянию службы.
+ */
+async function removeStaleWinDivert(out: OutputCallback): Promise<void> {
+  if (!isWindowsAdmin()) {
+    emit(out, '[?] WinDivert активен без winws.exe — удалить можно только от администратора', 'warn');
+    return;
+  }
+
+  const holders = await windivertHolders();
+  if (holders.length > 0) {
+    emit(out, `[X] WinDivert занят другой программой: ${holders.join(', ')}. Закройте её и повторите`, 'error');
+    return;
+  }
+
+  emit(out, '[?] WinDivert активен без winws.exe — удаляю...', 'warn');
+  await runCmd('sc', ['stop', 'WinDivert']).catch(() => undefined);
+  await runCmd('sc', ['delete', 'WinDivert']).catch(() => undefined);
+
+  // драйвер выгружается не мгновенно
+  let state = await serviceState('WinDivert');
+  for (let i = 0; i < 10 && (state === 'running' || state === 'stopping'); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    state = await serviceState('WinDivert');
+  }
+
+  if (state === 'missing') {
+    emit(out, '[OK] WinDivert удалён', 'success');
+  } else if (state === 'stopped') {
+    emit(out, '[OK] WinDivert остановлен, служба исчезнет после перезагрузки — обходу это не мешает', 'success');
+  } else {
+    emit(out, '[X] WinDivert не останавливается — перезагрузите компьютер', 'error');
+  }
+}
+
 async function serviceExists(name: string): Promise<boolean> {
   try {
     await runCmd('sc', ['query', name]);
@@ -183,14 +259,7 @@ export async function runDiagnosticsInApp(root: string, out: OutputCallback): Pr
   const winwsRunning = await processRunning('winws.exe');
   const windivertRunning = await serviceRunning('WinDivert');
   if (!winwsRunning && windivertRunning) {
-    emit(out, '[?] WinDivert активен без winws.exe — пробую удалить...', 'warn');
-    try {
-      await runCmd('net', ['stop', 'WinDivert']);
-      await runCmd('sc', ['delete', 'WinDivert']);
-      emit(out, '[OK] WinDivert удалён', 'success');
-    } catch {
-      emit(out, '[X] Не удалось удалить WinDivert', 'error');
-    }
+    await removeStaleWinDivert(out);
   }
 
   const conflicts = ['GoodbyeDPI', 'discordfix_zapret', 'winws1', 'winws2'];

@@ -39,15 +39,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/></svg>
         <b>VPN</b>
       </button>
-      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="5" title="Ctrl+5 · Фильтры и свои списки">
+      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="5" title="Ctrl+5 · Настройки">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
-        <b>Фильтры</b>
+        <b>Настройки</b>
       </button>
-      <button class="side-nav-btn" id="navAuto" type="button" data-view="auto" data-hotkey="6" title="Ctrl+6 · Автозапуск и обновления">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/><path d="M12 8v4l3 2"/></svg>
-        <b>Авто</b>
-      </button>
-      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="7" title="Ctrl+7 · Инструменты, журнал и о программе">
+      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Инструменты, журнал и о программе">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 10 2.5 2L8 14M12.5 14H16"/></svg>
         <b>Сервис</b>
       </button>
@@ -61,10 +57,10 @@
         <p id="pageSubtitle">Zapret, Telegram proxy и VPN в одном окне</p>
       </div>
       <div class="topbar-actions">
-        <div class="status-chip" id="statusBadge">
+        <button class="status-chip status-pill" id="statusBadge" type="button" data-goto="bypass" title="Обход">
           <span class="status-dot"></span>
           <span id="statusText">Загрузка...</span>
-        </div>
+        </button>
         <button class="status-chip status-pill" id="statusTg" type="button" data-goto="telegram" title="Telegram proxy">
           <span class="status-dot"></span><span>Telegram</span>
         </button>
@@ -187,36 +183,29 @@
 
     <!-- Обход -->
     <section class="page" data-page="bypass">
-      <section class="glass-card command-deck" id="mainPanel">
-        <div class="command-layout">
-          <div class="command-main">
-            <div class="meta-row">
-              <span class="pill" id="officialBadge">—</span>
-              <span class="pill pill-muted" id="versionLine">—</span>
+      <section class="glass-card tg-deck needs-zapret" id="bypassDeck">
+        <div class="tg-deck-layout">
+          <div class="tg-deck-main">
+            <div class="tg-deck-status">
+              <span class="tg-status-ring" id="bypassStatusDot" aria-hidden="true"><span class="tg-status-dot"></span></span>
+              <div class="tg-deck-copy">
+                <strong class="tg-deck-title" id="bypassDeckTitle">Обход выключен</strong>
+                <p class="tg-deck-meta" id="bypassDeckMeta">—</p>
+              </div>
             </div>
-            <div class="path-card">
-              <span class="eyebrow">Папка zapret</span>
-              <code class="path-value" id="zapretPath">—</code>
+            <div class="bypass-activity hidden" id="bypassActivity">
+              <p class="bypass-activity-line">
+                <span class="health-dot" id="bypassHealthDot" aria-hidden="true"></span>
+                <span id="bypassActivityText">—</span>
+              </p>
+              <details class="bypass-history" id="bypassHistory">
+                <summary>История событий</summary>
+                <ol class="bypass-history-list" id="bypassHistoryList"></ol>
+              </details>
             </div>
-            <div class="chip-row runtime-lock-group" id="pathActionsGroup">
-              <button class="chip-btn" id="btnRescan" type="button">Пересканировать</button>
-              <button class="chip-btn" id="btnChangePath" type="button">Сменить путь</button>
-              <button class="chip-btn" id="btnDownloadInline" type="button">Обновить</button>
-            </div>
-            <p class="runtime-lock-hint hidden" id="pathLockHint">Остановите обход, чтобы менять папку или обновлять zapret</p>
           </div>
-
-          <div class="power-zone hidden" id="powerZone">
-            <div class="power-stack">
-              <div class="power-ring"></div>
-              <div class="power-ring power-ring-2"></div>
-              <button class="power-btn" id="btnToggle" type="button" aria-label="Старт или стоп">
-                <span class="power-spinner hidden" id="powerSpinner" aria-hidden="true"></span>
-                <span class="power-icon" id="btnToggleIcon" aria-hidden="true">▶</span>
-                <span class="power-label" id="btnToggleText">Старт</span>
-              </button>
-            </div>
-            <span class="power-hint">Старт / стоп</span>
+          <div class="tg-deck-actions">
+            <button class="btn btn-glow" id="btnBypassDeckToggle" type="button">Запустить</button>
           </div>
         </div>
       </section>
@@ -258,6 +247,41 @@
         <p class="runtime-lock-hint hidden" id="configLockHint">Остановите обход, чтобы сменить конфиг вручную, или запустите подбор — он перезапустит обход сам</p>
       </section>
 
+      <section class="glass-card command-deck" id="mainPanel">
+        <div class="command-layout">
+          <div class="command-main">
+            <span class="eyebrow folder-eyebrow">Установка zapret</span>
+            <div class="meta-row">
+              <span class="pill" id="officialBadge">—</span>
+              <span class="pill pill-muted" id="versionLine">—</span>
+            </div>
+            <div class="path-card">
+              <span class="eyebrow">Папка zapret</span>
+              <code class="path-value" id="zapretPath">—</code>
+            </div>
+            <div class="chip-row runtime-lock-group" id="pathActionsGroup">
+              <button class="chip-btn" id="btnRescan" type="button">Пересканировать</button>
+              <button class="chip-btn" id="btnChangePath" type="button">Сменить путь</button>
+              <button class="chip-btn" type="button" data-goto="settings" data-settings-tab="setUpdates">Обновления</button>
+            </div>
+            <p class="runtime-lock-hint hidden" id="pathLockHint">Остановите обход, чтобы менять папку</p>
+          </div>
+
+          <div class="power-zone hidden" id="powerZone">
+            <div class="power-stack">
+              <div class="power-ring"></div>
+              <div class="power-ring power-ring-2"></div>
+              <button class="power-btn" id="btnToggle" type="button" aria-label="Старт или стоп">
+                <span class="power-spinner hidden" id="powerSpinner" aria-hidden="true"></span>
+                <span class="power-icon" id="btnToggleIcon" aria-hidden="true">▶</span>
+                <span class="power-label" id="btnToggleText">Старт</span>
+              </button>
+            </div>
+            <span class="power-hint">Старт / стоп</span>
+          </div>
+        </div>
+      </section>
+
       <div class="page-missing when-missing">
         <p>Zapret ещё не установлен.</p>
         <button class="btn btn-glow btn-sm" type="button" data-goto="home">Установить</button>
@@ -272,7 +296,7 @@
             <div class="tg-deck-status">
               <span class="tg-status-ring" id="tgStatusDot" aria-hidden="true"><span class="tg-status-dot"></span></span>
               <div class="tg-deck-copy">
-                <strong class="tg-deck-title" id="tgDeckTitle">Telegram proxy остановлен</strong>
+                <strong class="tg-deck-title" id="tgDeckTitle">Telegram-прокси остановлен</strong>
                 <p class="tg-deck-meta" id="tgDeckMeta">Подключение MTProto→WebSocket через локальный прокси</p>
               </div>
             </div>
@@ -284,8 +308,8 @@
               <div class="tg-stat-row"><span class="tg-stat" id="tgStatBad">0</span><span class="tg-stat-label">Ошибки</span></div>
             </div>
           </div>
-          <div class="tg-deck-actions hidden">
-            <button class="hidden" id="btnTgToggle" type="button">Запустить</button>
+          <div class="tg-deck-actions">
+            <button class="btn btn-glow" id="btnTgToggle" type="button">Запустить</button>
             <button class="hidden" id="btnTgDisconnect" type="button">Отключить</button>
           </div>
         </div>
@@ -349,6 +373,9 @@
               <div class="tg-stat-row"><span class="tg-stat" id="vpnStatRx">0</span><span class="tg-stat-label">Получено</span></div>
               <div class="tg-stat-row"><span class="tg-stat" id="vpnStatTx">0</span><span class="tg-stat-label">Отправлено</span></div>
             </div>
+          </div>
+          <div class="tg-deck-actions">
+            <button class="btn btn-glow" id="btnVpnDeckToggle" type="button">Включить</button>
           </div>
         </div>
       </section>
@@ -436,13 +463,146 @@
 
     <!-- Настройки -->
     <section class="page" data-page="settings">
-      <section class="glass-card bento-card needs-zapret">
+      <div class="settings-tabs" role="tablist" aria-label="Разделы настроек">
+        <button type="button" role="tab" data-tab="setStartup" aria-controls="setStartup">Запуск</button>
+        <button type="button" role="tab" data-tab="setBypass" aria-controls="setBypass">Автоматика</button>
+        <button class="needs-zapret" type="button" role="tab" data-tab="setFilters" aria-controls="setFilters">Фильтры</button>
+        <button class="needs-zapret" type="button" role="tab" data-tab="setLists" aria-controls="setLists">Свои списки</button>
+        <button type="button" role="tab" data-tab="setUpdates" aria-controls="setUpdates">Обновления</button>
+      </div>
+
+      <section role="tabpanel" class="glass-card bento-card settings-card" id="setStartup">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.6a8 8 0 1 0 11.4 0"/></svg></span>
+            <h3>Запуск и окно</h3>
+          </div>
+          <p class="card-hint">Что включается само и что делает крестик</p>
+        </header>
+
+        <p class="settings-group-label">При входе в Windows</p>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="launchAtStartupToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Запускать Skvoz</span>
+              <span class="switch-desc">Приложение стартует свёрнутым в трей</span>
+            </span>
+          </label>
+        </div>
+
+        <p class="settings-group-label">При открытии Skvoz</p>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="autoStartBypassToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Включать обход</span>
+              <span class="switch-desc">Zapret с выбранным конфигом. Заодно включит запуск Skvoz вместе с Windows</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="tgAutostart">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Включать Telegram-прокси</span>
+              <span class="switch-desc">TG WS Proxy на адресе из раздела Telegram</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="vpnAutostart">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Подключать VPN</span>
+              <span class="switch-desc">Если конфиг AmneziaWG уже создан</span>
+            </span>
+          </label>
+        </div>
+
+        <p class="settings-group-label">Окно</p>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="minimizeToTrayToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Сворачивать в трей</span>
+              <span class="switch-desc">Крестик прячет окно, обход и прокси продолжают работать</span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section role="tabpanel" class="glass-card bento-card settings-card" id="setBypass">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.4-3 8.4-7 10-4-1.6-7-5.6-7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
+            <h3>Автоматика обхода</h3>
+          </div>
+          <p class="card-hint">Skvoz сам выбирает конфиг и следит, чтобы сайты открывались</p>
+        </header>
+
+        <p class="settings-group-label">Подбор конфига</p>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="autoPickStrategyToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Подобрать при первом запуске</span>
+              <span class="switch-desc">Проверить все .bat и выбрать тот, что открывает больше сайтов</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="backgroundRerankToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Перепроверять в простое</span>
+              <span class="switch-desc">Раз в 3 дня, когда компьютер 10 минут не трогают, он от сети и не идёт видео. Обход на минуту-две выключится</span>
+            </span>
+          </label>
+        </div>
+
+        <p class="settings-group-label">Если сайты перестали открываться</p>
+        <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="bypassAutoRecoverToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Восстанавливать обход</span>
+              <span class="switch-desc">Перезапускать winws, если он упал или проверка сайтов не прошла</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact setting-nested">
+          <label class="switch">
+            <input type="checkbox" id="bypassAutoSwitchToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Переключаться на другой конфиг</span>
+              <span class="switch-desc">Если перезапуск не помог — следующий рабочий из последней проверки</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact">
+          <label class="field-label" for="probeSitesInput">Сайты для проверки</label>
+          <input id="probeSitesInput" class="tg-input" type="text" spellcheck="false" placeholder="youtube.com, discord.com">
+          <p class="switch-desc probe-sites-hint">Через запятую, до 5. Пусто — YouTube и Discord из списка zapret</p>
+        </div>
+      </section>
+
+      <section role="tabpanel" class="glass-card bento-card settings-card needs-zapret" id="setFilters">
         <header class="card-head card-head-stack">
           <div class="card-head-row">
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V18l-4 2v-7.5z"/></svg></span>
             <h3>Фильтры zapret</h3>
           </div>
-          <p class="card-hint">Игры, IPSet, свои списки и проверка обновлений zapret</p>
+          <p class="card-hint">Что именно пропускает обход. Применяются при следующем запуске</p>
         </header>
 
         <div class="runtime-lock-group" id="runtimeSettingsGroup">
@@ -470,167 +630,118 @@
               <option value="any">Любой IP (any)</option>
               <option value="none">Выключен (none)</option>
             </select>
-            <button class="btn btn-soft btn-sm" id="btnUpdateIpset" type="button">Обновить</button>
           </div>
+        </div>
+        <p class="runtime-lock-hint hidden" id="settingsLockHint">Остановите обход, чтобы менять фильтры</p>
+      </section>
 
+      <section role="tabpanel" class="glass-card bento-card settings-card needs-zapret" id="setLists">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg></span>
+            <h3>Свои домены и IP</h3>
+          </div>
+          <p class="card-hint">Добавить сайт в обход или исключить из него</p>
+        </header>
+
+        <div class="runtime-lock-group user-lists-block" id="userListsGroup">
+          <select id="userListKind" aria-label="Список">
+            <option value="general">Для обхода (домены и IP)</option>
+            <option value="exclude-domains">Исключить домены</option>
+            <option value="exclude-ips">Исключить IP / подсети</option>
+          </select>
+          <p class="hint user-list-hint" id="userListHint">—</p>
+          <div class="user-list-quick">
+            <input id="userListQuickAdd" class="user-list-input" type="text" placeholder="example.com или 192.168.0.0/24" autocomplete="off">
+            <button class="btn btn-glow btn-sm" id="btnUserListAdd" type="button">Добавить</button>
+          </div>
+          <div class="user-list-summary">
+            <span class="user-list-count" id="userListCount">Добавлено: 0</span>
+          </div>
+          <ul class="user-list-chips" id="userListChips" aria-label="Добавленные адреса"></ul>
+          <details class="user-list-raw" id="userListRaw">
+            <summary>Редактировать текстом</summary>
+            <textarea id="userListEditor" class="user-list-editor" rows="5" spellcheck="false" placeholder="example.com"></textarea>
+            <div class="user-list-raw-foot">
+              <span class="hint">По одному адресу на строку, строки с # — комментарии</span>
+              <button class="btn btn-soft btn-sm" id="btnUserListSave" type="button">Сохранить</button>
+            </div>
+          </details>
+        </div>
+        <p class="runtime-lock-hint hidden" id="listsLockHint">Остановите обход, чтобы менять списки</p>
+      </section>
+
+      <section role="tabpanel" class="glass-card bento-card settings-card" id="setUpdates">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/></svg></span>
+            <h3>Обновления</h3>
+          </div>
+          <p class="card-hint">Приложение, zapret и списки адресов — всё в одном месте</p>
+        </header>
+
+        <p class="settings-group-label">Skvoz</p>
+        <div class="setting-block setting-block-compact setting-row">
+          <span class="switch-copy">
+            <span class="switch-title" id="updAppVersion">Skvoz</span>
+            <span class="switch-desc" id="appUpdateAutoLine">Проверяется при запуске и раз в 6 часов, ставится одной кнопкой</span>
+          </span>
+          <span class="upd-actions">
+            <button class="btn btn-ghost btn-sm" id="btnAppChangelog" type="button">Что нового</button>
+            <button class="btn btn-soft btn-sm" id="linkCheckAppUpdate" type="button">Проверить</button>
+          </span>
+        </div>
+
+        <div class="needs-zapret">
+          <p class="settings-group-label">Zapret</p>
+          <div class="setting-block setting-block-compact setting-row">
+            <span class="switch-copy">
+              <span class="switch-title" id="updZapretVersion">Zapret</span>
+              <span class="switch-desc">Сборка Flowseal: конфиги .bat, winws и списки</span>
+            </span>
+            <span class="upd-actions">
+              <button class="btn btn-ghost btn-sm" id="btnCheckUpdates" type="button">Проверить</button>
+              <button class="btn btn-soft btn-sm" id="btnDownloadInline" type="button">Обновить</button>
+            </span>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="autoUpdateZapretToggle">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Обновлять zapret сам</span>
+                <span class="switch-desc">Раз в 6 часов ставит новый релиз с GitHub, свои списки и конфиг сохраняются</span>
+              </span>
+            </label>
+          </div>
           <div class="setting-block setting-block-compact">
             <label class="switch">
               <input type="checkbox" id="checkUpdatesToggle">
               <span class="switch-ui"></span>
               <span class="switch-copy">
                 <span class="switch-title">Проверка обновлений в .bat</span>
-                <span class="switch-desc">Встроенная проверка zapret при запуске стратегии</span>
+                <span class="switch-desc">Встроенная проверка zapret при запуске конфига. Skvoz проверяет и сам — можно выключить</span>
               </span>
             </label>
           </div>
 
-          <div class="setting-block user-lists-block" id="userListsGroup">
-            <label class="field-label" for="userListKind">Свои домены и IP</label>
-            <select id="userListKind">
-              <option value="general">Для обхода (домены и IP)</option>
-              <option value="exclude-domains">Исключить домены</option>
-              <option value="exclude-ips">Исключить IP / подсети</option>
-            </select>
-            <p class="hint user-list-hint" id="userListHint">—</p>
-            <div class="user-list-quick">
-              <input id="userListQuickAdd" class="user-list-input" type="text" placeholder="example.com или 192.168.0.0/24" autocomplete="off">
-              <button class="btn btn-glow btn-sm" id="btnUserListAdd" type="button">Добавить</button>
-            </div>
-            <div class="user-list-summary">
-              <span class="user-list-count" id="userListCount">Добавлено: 0</span>
-            </div>
-            <ul class="user-list-chips" id="userListChips" aria-label="Добавленные адреса"></ul>
-            <details class="user-list-raw" id="userListRaw">
-              <summary>Редактировать текстом</summary>
-              <textarea id="userListEditor" class="user-list-editor" rows="5" spellcheck="false" placeholder="example.com"></textarea>
-              <div class="user-list-raw-foot">
-                <span class="hint">По одному адресу на строку, строки с # — комментарии</span>
-                <button class="btn btn-soft btn-sm" id="btnUserListSave" type="button">Сохранить</button>
-              </div>
-            </details>
-          </div>
-        </div>
-        <p class="runtime-lock-hint hidden" id="settingsLockHint">Остановите обход, чтобы менять фильтры и списки</p>
-      </section>
-    </section>
-
-    <!-- Авто -->
-    <section class="page" data-page="auto">
-      <section class="glass-card bento-card">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.6a8 8 0 1 0 11.4 0"/></svg></span>
-            <h3>Запуск</h3>
-          </div>
-          <p class="card-hint">Что происходит при входе в Windows и при закрытии окна</p>
-        </header>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="launchAtStartupToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автозапуск приложения</span>
-                <span class="switch-desc">Открывать Skvoz при входе в Windows</span>
-              </span>
-            </label>
-          </div>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="autoStartBypassToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автозапуск обхода</span>
-                <span class="switch-desc">Включать zapret при открытии приложения (включит и автозапуск приложения)</span>
-              </span>
-            </label>
-          </div>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="tgAutostart">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автозапуск прокси</span>
-                <span class="switch-desc">Включать TG WS Proxy при открытии приложения</span>
-              </span>
-            </label>
-          </div>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="vpnAutostart">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автозапуск VPN</span>
-                <span class="switch-desc">Подключать VPN при открытии приложения</span>
-              </span>
-            </label>
-          </div>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="minimizeToTrayToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Сворачивать в трей</span>
-                <span class="switch-desc">Крестик прячет окно, обход и прокси продолжают работать</span>
-              </span>
-            </label>
-          </div>
-      </section>
-
-      <section class="glass-card bento-card">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.4-3 8.4-7 10-4-1.6-7-5.6-7-10V6z"/><path d="m9 12 2 2 4-4"/></svg></span>
-            <h3>Обход</h3>
-          </div>
-          <p class="card-hint">Подбор конфига и восстановление при сбоях</p>
-        </header>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="autoPickStrategyToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автоподбор конфига</span>
-                <span class="switch-desc">При первом запуске проверить все .bat и выбрать лучший</span>
-              </span>
-            </label>
-          </div>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="bypassAutoRecoverToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автовосстановление</span>
-                <span class="switch-desc">Перезапускать обход, если winws упал или сайты перестали открываться</span>
-              </span>
-            </label>
-          </div>
-      </section>
-
-      <section class="glass-card bento-card">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v4h-4"/></svg></span>
-            <h3>Обновления</h3>
-          </div>
-          <p class="card-hint">Zapret и само приложение</p>
-        </header>
-          <div class="setting-block setting-block-compact">
-            <label class="switch">
-              <input type="checkbox" id="autoUpdateZapretToggle">
-              <span class="switch-ui"></span>
-              <span class="switch-copy">
-                <span class="switch-title">Автообновление zapret</span>
-                <span class="switch-desc">Раз в 6 часов ставит новый релиз с GitHub, свои списки и конфиг сохраняются</span>
-              </span>
-            </label>
+          <p class="settings-group-label">Списки и данные</p>
+          <div class="setting-block setting-block-compact setting-row">
+            <span class="switch-copy">
+              <span class="switch-title">Файл hosts</span>
+              <span class="switch-desc">Свежие адреса из репозитория zapret</span>
+            </span>
+            <button class="btn btn-soft btn-sm" id="btnUpdateHosts" type="button">Обновить</button>
           </div>
           <div class="setting-block setting-block-compact setting-row">
             <span class="switch-copy">
-              <span class="switch-title">Обновления Skvoz</span>
-              <span class="switch-desc" id="appUpdateAutoLine">Проверяются при запуске и раз в 6 часов, ставятся одной кнопкой</span>
+              <span class="switch-title">Список IPSet</span>
+              <span class="switch-desc">IP-адреса для фильтра IPSet (режим выбирается во вкладке «Фильтры»)</span>
             </span>
-            <button class="btn btn-soft btn-sm" id="linkCheckAppUpdate" type="button">Проверить сейчас</button>
+            <button class="btn btn-soft btn-sm" id="btnUpdateIpset" type="button">Обновить</button>
           </div>
+          <p class="runtime-lock-hint hidden" id="updatesLockHint">Остановите обход, чтобы обновить zapret, IPSet или изменить проверку в .bat</p>
+        </div>
       </section>
     </section>
 
@@ -642,7 +753,7 @@
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></span>
             <h3>Инструменты</h3>
           </div>
-          <p class="card-hint">Диагностика, обслуживание и полное удаление zapret</p>
+          <p class="card-hint">Проверка соединения, состояние winws и отчёт для баг-репорта</p>
         </header>
         <div class="tool-grid">
           <div class="tool-cell">
@@ -654,20 +765,8 @@
             <p class="tool-hint">Запущен ли winws.exe</p>
           </div>
           <div class="tool-cell">
-            <button class="btn btn-soft btn-sm" id="btnCheckUpdates" type="button">Версия</button>
-            <p class="tool-hint">Сравнение с GitHub</p>
-          </div>
-          <div class="tool-cell">
-            <button class="btn btn-soft btn-sm" id="btnUpdateHosts" type="button">Обновить hosts</button>
-            <p class="tool-hint">Свежий hosts из репозитория</p>
-          </div>
-          <div class="tool-cell">
-            <button class="btn btn-soft btn-sm" id="btnRemoveServices" type="button">Удалить службы</button>
-            <p class="tool-hint">Снять службы zapret и WinDivert</p>
-          </div>
-          <div class="tool-cell tool-cell-danger runtime-lock-group" id="fullRemoveGroup">
-            <button class="btn btn-danger btn-sm" id="btnFullRemove" type="button">Удалить с ПК</button>
-            <p class="tool-hint">Стоп, очистка и удаление папок</p>
+            <button class="btn btn-soft btn-sm" id="btnSaveReport" type="button">Отчёт</button>
+            <p class="tool-hint">Файл для баг-репорта, без личных данных</p>
           </div>
         </div>
       </section>
@@ -687,6 +786,26 @@
           </div>
         </div>
         <div class="terminal-body expanded" id="log"></div>
+      </section>
+
+      <section class="glass-card bento-card danger-card needs-zapret">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon card-icon-danger" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13"/></svg></span>
+            <h3>Удаление</h3>
+          </div>
+          <p class="card-hint">Если zapret мешает или больше не нужен. Обычно это не требуется</p>
+        </header>
+        <div class="tool-grid tool-grid-2">
+          <div class="tool-cell">
+            <button class="btn btn-ghost btn-sm btn-danger-text" id="btnRemoveServices" type="button">Удалить службы</button>
+            <p class="tool-hint">Снять службы zapret и WinDivert</p>
+          </div>
+          <div class="tool-cell tool-cell-danger runtime-lock-group" id="fullRemoveGroup">
+            <button class="btn btn-danger btn-sm" id="btnFullRemove" type="button">Удалить с ПК</button>
+            <p class="tool-hint">Стоп, очистка и удаление папок</p>
+          </div>
+        </div>
       </section>
 
       <section class="glass-card bento-card about-card">

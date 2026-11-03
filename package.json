@@ -1,6 +1,6 @@
 {
   "name": "zapret-app",
-  "version": "1.10.1",
+  "version": "1.11.0",
   "description": "Skvoz — пульт для zapret и Telegram-прокси",
   "main": "dist/main/main.js",
   "author": "ProtheticGlitch",
@@ -14,13 +14,16 @@
     "build": "node scripts/clean.js dist && tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
     "icons": "node scripts/generate-icon.js",
     "logo": "electron scripts/render-logo.js",
+    "installer-art": "electron scripts/render-installer-art.js",
     "start": "scripts\\start-win.cmd",
     "dev": "npm run vendor && tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/run-dev.js",
     "dev:admin": "scripts\\start-win.cmd",
     "pack": "npm run vendor && npm run build && npm run icons && electron-builder --win --x64",
     "pack:portable": "npm run vendor && npm run build && npm run icons && electron-builder --win portable --x64",
     "pack:setup": "npm run vendor && npm run build && npm run icons && electron-builder --win nsis --x64",
-    "vendor": "node scripts/fetch-vendor.js"
+    "vendor": "node scripts/fetch-vendor.js",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "node scripts/clean.js dist-test && tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\""
   },
   "build": {
     "appId": "com.protheticglitch.zapret-app",
@@ -89,6 +92,15 @@
       "shortcutName": "Skvoz",
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
+      "installerSidebar": "installerSidebar.bmp",
+      "uninstallerSidebar": "uninstallerSidebar.bmp",
+      "installerHeader": "installerHeader.bmp",
+      "include": "assets/installer.nsh",
+      "installerLanguages": [
+        "ru_RU"
+      ],
+      "language": "1049",
+      "uninstallDisplayName": "Skvoz",
       "artifactName": "Skvoz-Setup-${version}.${ext}"
     },
     "portable": {

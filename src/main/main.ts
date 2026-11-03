@@ -1,5 +1,20 @@
 import './app-paths';
-import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu, screen, clipboard, Notification } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  shell,
+  Tray,
+  Menu,
+  screen,
+  clipboard,
+  Notification,
+  net,
+  powerMonitor,
+  type NativeImage,
+} from 'electron';
+import os from 'os';
 import { loadAppIcon } from './icons';
 import fs from 'fs';
 import path from 'path';
@@ -13,8 +28,22 @@ import {
   saveUserList,
   type UserListKind,
 } from './user-lists';
-import type { TestResultPayload } from './tests-runner';
+import {
+  loadTargets,
+  rankingPct,
+  type PickBestStrategyOutcome,
+  type StrategyRanking,
+  type TestResultPayload,
+} from './tests-runner';
+import { normalizeProbeSite, pickProbeUrls, probeBypassTargets } from './bypass-health';
+import { BypassEventLog, type BypassEventKind } from './bypass-events';
+import { BackgroundRerank, hasDisplayRequests } from './background-rerank';
+import { buildDiagnosticReport, type LogLine } from './diagnostic-report';
+import { capture, detectNetwork, interfacesFingerprint, UNKNOWN_NETWORK, type NetworkIdentity } from './network-id';
+import { StrategyMemory } from './strategy-memory';
+import { withStatusDot, type Rgb } from './tray-badge';
 import { APP_WINDOW } from './window-size';
+import { loadConfig, saveConfig, type AppConfig } from './config';
 import {
   checkAppUpdate,
   downloadAppUpdate,
@@ -59,12 +88,7 @@ import {
   updateIpsetList,
   type IpsetMode,
 } from './zapret-maintenance';
-import {
-  configureBypassWatchdog,
-  setBypassWatchdogExpected,
-  startBypassWatchdog,
-  stopBypassWatchdog,
-} from './bypass-watchdog';
+import { BypassWatchdog, strategyLabel, type WatchdogHealth } from './bypass-watchdog';
 import { tgwsProxy, type TgwsProxyConfig } from './tgws-proxy';
 import { amneziaVpn } from './amneziawg';
 import { createWarpVpn, WARP_ENDPOINTS, type WarpGenerateOptions } from './warp-generator';
@@ -87,26 +111,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const CONFIG_FILE = 'config.json';
-const SETTINGS_REVISION = 2;
-
-interface AppConfig {
-  zapretPath: string;
-  installBase: string;
-  selectedStrategy: string | null;
-  minimizeToTray: boolean;
-  bootstrapDone: boolean;
-  launchAtStartup: boolean;
-  autoStartBypass: boolean;
-  autoPickBestStrategy: boolean;
-  bypassStoppedByUser: boolean;
-  bypassAutoRecover: boolean;
-  dismissedAppVersion: string | null;
-  skipAutoBootstrap: boolean;
-  autoUpdateZapret: boolean;
-  settingsRevision?: number;
-}
-
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let bootstrapState: BootstrapState | null = null;
@@ -127,9 +131,10 @@ interface TrayMenuState {
   running: boolean;
   canStart: boolean;
   strategy: string | null;
+  strategies: string[];
 }
 
-let trayMenuState: TrayMenuState = { running: false, canStart: false, strategy: null };
+let trayMenuState: TrayMenuState = { running: false, canStart: false, strategy: null, strategies: [] };
 let trayMenuStateAt = 0;
 
 const TRAY_MENU_CACHE_MS = 10_000;
@@ -140,48 +145,6 @@ let pendingAppUpdate: PendingAppUpdate | null = null;
 let ipcRegistered = false;
 let startupTasksPromise: Promise<void> | null = null;
 let traySyncTimer: ReturnType<typeof setInterval> | null = null;
-
-function configPath(): string {
-  return path.join(app.getPath('userData'), CONFIG_FILE);
-}
-
-function loadConfig(): AppConfig {
-  const defaults: AppConfig = {
-    zapretPath: '',
-    installBase: getDefaultInstallBase(),
-    selectedStrategy: null,
-    minimizeToTray: true,
-    bootstrapDone: false,
-    launchAtStartup: false,
-    autoStartBypass: false,
-    autoPickBestStrategy: true,
-    bypassStoppedByUser: false,
-    bypassAutoRecover: true,
-    dismissedAppVersion: null,
-    skipAutoBootstrap: false,
-    settingsRevision: SETTINGS_REVISION,
-    autoUpdateZapret: true,
-  };
-
-  try {
-    const raw = fs.readFileSync(configPath(), 'utf8');
-    const merged: AppConfig = { ...defaults, ...JSON.parse(raw) };
-    if ((merged.settingsRevision ?? 1) < SETTINGS_REVISION) {
-      merged.autoStartBypass = false;
-      merged.settingsRevision = SETTINGS_REVISION;
-      fs.mkdirSync(path.dirname(configPath()), { recursive: true });
-      fs.writeFileSync(configPath(), JSON.stringify(merged, null, 2), 'utf8');
-    }
-    return merged;
-  } catch {
-    return defaults;
-  }
-}
-
-function saveConfig(config: AppConfig): void {
-  fs.mkdirSync(path.dirname(configPath()), { recursive: true });
-  fs.writeFileSync(configPath(), JSON.stringify(config, null, 2), 'utf8');
-}
 
 function markBypassStoppedByUser(): void {
   if (config.bypassStoppedByUser) return;
@@ -196,7 +159,10 @@ function clearBypassStoppedByUser(): void {
 }
 
 function markBypassExpectedRunning(running: boolean): void {
-  setBypassWatchdogExpected(running);
+  bypassWatchdog.setExpected(running);
+  if (running) logBypassEvent('started', 'Обход запущен', config.selectedStrategy);
+  else logBypassEvent('stopped', 'Обход остановлен');
+  updateTrayIcon();
 }
 
 function initTgwsProxy(): void {
@@ -271,38 +237,410 @@ async function openWarpRoute(): Promise<(() => Promise<void>) | null> {
   };
 }
 
-function initBypassWatchdog(): void {
-  configureBypassWatchdog({
-    intervalMs: 8_000,
-    healthCheckIntervalMs: 30_000,
-    maxAttempts: 8,
-    isStoppedByUser: () => config.bypassStoppedByUser,
-    autoRecoverEnabled: () => config.bypassAutoRecover !== false,
-    resolveZapretPath: () => tryResolveZapretPath({ allowScan: false }),
-    resolveStrategy: async (root) => {
+// ── Сторож обхода, память конфигов по сетям, фоновая перепроверка ─────
+
+const BAD_STRATEGY_TTL_MS = 6 * 60 * 60_000;
+const RERANK_MAX_AGE_MS = 3 * 24 * 60 * 60_000;
+const NETWORK_POLL_MS = 20_000;
+const TOOL_LOG_LIMIT = 400;
+
+const strategyMemory = new StrategyMemory(path.join(app.getPath('userData'), 'strategy-memory.json'));
+const bypassEvents = new BypassEventLog(path.join(app.getPath('userData'), 'bypass-events.json'));
+const toolLog: LogLine[] = [];
+let currentNetwork: NetworkIdentity = UNKNOWN_NETWORK;
+let networkFingerprint = '';
+let networkTimer: ReturnType<typeof setInterval> | null = null;
+
+const HEALTH_LABEL: Record<WatchdogHealth, string> = {
+  off: 'выключен',
+  checking: 'проверяется',
+  ok: 'сайты открываются',
+  degraded: 'проверка не прошла',
+  recovering: 'восстанавливается',
+  down: 'не работает',
+};
+
+const TRAY_DOT_COLORS: Partial<Record<WatchdogHealth, Rgb>> = {
+  ok: [52, 199, 89],
+  degraded: [255, 184, 0],
+  recovering: [255, 184, 0],
+  down: [255, 92, 82],
+};
+
+const trayIconCache = new Map<string, NativeImage>();
+
+function emitBypassActivity(): void {
+  mainWindow?.webContents.send('bypass-activity-changed');
+  if (trayWindow && !trayWindow.isDestroyed()) trayWindow.webContents.send('bypass-activity-changed');
+}
+
+function logBypassEvent(kind: BypassEventKind, text: string, strategy?: string | null): void {
+  bypassEvents.add(kind, text, strategy);
+  emitBypassActivity();
+}
+
+function setSelectedStrategy(strategy: string | null): void {
+  config.selectedStrategy = strategy;
+  saveConfig(config);
+  strategyMemory.rememberSelected(currentNetwork.id, currentNetwork.label, strategy);
+}
+
+/** Рейтинг этой сети; если его ещё не снимали — последний подбор, если он с той же папки zapret */
+function currentRankings(root: string): StrategyRanking[] {
+  const own = strategyMemory.getRankings(currentNetwork.id, root);
+  if (own.length > 0) return own;
+  const last = loadLastTestResults();
+  return last && (!last.root || last.root === root) ? last.rankings : [];
+}
+
+function saveRankings(root: string, outcome: PickBestStrategyOutcome, quick: boolean): void {
+  if (outcome.rankings.length === 0) return;
+  // прерванный подбор не показываем как «последние результаты», но в память сети берём
+  if (!outcome.cancelled) saveLastTestResults({ ...outcome, quick }, root);
+  strategyMemory.saveRankings(currentNetwork.id, currentNetwork.label, root, outcome.rankings, !quick && !outcome.cancelled);
+}
+
+function resolveProbeUrls(root: string, strategy: string): string[] {
+  const failed = currentRankings(root).find((r) => r.strategy === strategy)?.failed ?? [];
+  return pickProbeUrls(loadTargets(root), failed, config.probeSites);
+}
+
+function isBypassAutomationBusy(): boolean {
+  return autoPickBestStrategyRunning || backgroundRerank.isRunning || zapretUpdateRunning;
+}
+
+const bypassWatchdog = new BypassWatchdog({
+  intervalMs: 8_000,
+  healthCheckIntervalMs: 30_000,
+  maxAttempts: 8,
+  restartsBeforeSwitch: 2,
+  maxFallbacks: 4,
+  isStoppedByUser: () => config.bypassStoppedByUser,
+  autoRecoverEnabled: () => config.bypassAutoRecover !== false,
+  autoSwitchEnabled: () => config.bypassAutoSwitch !== false,
+  isBusy: isBypassAutomationBusy,
+  isOnline: () => net.isOnline(),
+  verifyRunning: verifyBypassRunning,
+  resolveZapretPath: () => tryResolveZapretPath({ allowScan: false }),
+  resolveStrategy: async (root) => {
+    const status = await getStatus(root, { light: true });
+    const strategy = config.selectedStrategy ?? status.selectedStrategy;
+    if (!strategy || !status.strategies.includes(strategy)) return null;
+    return strategy;
+  },
+  probe: (root, strategy) => probeBypassTargets(resolveProbeUrls(root, strategy)),
+  restartBypass: async (root, strategy) => {
+    await startBypass(root, strategy, (line) => sendToolOutput(line.text, line.level));
+  },
+  nextFallbackStrategy: async (root, tried) => {
+    const status = await getStatus(root, { light: true });
+    const next = currentRankings(root).find(
+      (r) =>
+        status.strategies.includes(r.strategy) &&
+        !tried.includes(r.strategy) &&
+        !strategyMemory.isBad(currentNetwork.id, root, r.strategy) &&
+        rankingPct(r) > 0
+    );
+    return next?.strategy ?? null;
+  },
+  markStrategyBad: (root, strategy) =>
+    strategyMemory.markBad(currentNetwork.id, currentNetwork.label, root, strategy, BAD_STRATEGY_TTL_MS),
+  quickPickStrategy: async (root) => {
+    autoPickBestStrategyRunning = true;
+    try {
+      const outcome = await pickBestStrategyForRoot(root, (line) => sendToolOutput(line.text, line.level), {
+        emitUiEvents: false,
+        quick: true,
+        shouldCancel: () => config.bypassStoppedByUser || config.bypassAutoRecover === false,
+      });
+      saveRankings(root, outcome, true);
+      const best = outcome.best;
+      return best && rankingPct(best) > 0 ? best.strategy : null;
+    } finally {
+      autoPickBestStrategyRunning = false;
+    }
+  },
+  onStrategySwitched: (strategy, previous) => {
+    setSelectedStrategy(strategy);
+    invalidateStatusCache();
+    notify(
+      'Конфиг переключён',
+      `${strategyLabel(previous)} перестал работать — обход переключён на ${strategyLabel(strategy)}.`
+    );
+    mainWindow?.webContents.send('bypass-auto-started');
+    void refreshTrayMenu(true);
+  },
+  onOutput: (text, level) => sendToolOutput(text, level),
+  onRecovered: () => {
+    invalidateStatusCache();
+    notify('Обход восстановлен', 'winws.exe перезапущен автоматически.');
+    mainWindow?.webContents.send('bypass-auto-started');
+    void refreshTrayMenu(true);
+  },
+  onGiveUp: () => {
+    invalidateStatusCache();
+    mainWindow?.webContents.send('bypass-watchdog-stopped');
+    notify('Обход остановился', 'Рабочий конфиг не найден. Откройте приложение, чтобы проверить настройки.');
+    void refreshTrayMenu(true);
+  },
+  onEvent: (event) => logBypassEvent(event.kind, event.text, event.strategy),
+  onHealth: () => {
+    rebuildTrayMenu();
+    emitBypassActivity();
+  },
+});
+
+const backgroundRerank = new BackgroundRerank({
+  isEnabled: () => config.backgroundRerank !== false,
+  // перепроверяем только работающий обход: если пользователь его выключил, winws не трогаем
+  canRun: () =>
+    isWindowsAdmin() &&
+    !autoPickBestStrategyRunning &&
+    !zapretUpdateRunning &&
+    !bypassWatchdog.isRecovering &&
+    !['off', 'down'].includes(bypassWatchdog.currentHealth) &&
+    !powerMonitor.isOnBatteryPower(),
+  getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+  isUserWatching: async () => {
+    const output = await capture('powercfg.exe', ['/requests']);
+    // не смогли спросить Windows — лучше пропустить перепроверку, чем оборвать фильм
+    return output === null || hasDisplayRequests(output);
+  },
+  needsRerank: async () => {
+    const root = getKnownZapretPath();
+    if (!root) return false;
+    const status = await getStatus(root, { light: true });
+    if (status.strategies.length < 2) return false;
+    const rankedAt = strategyMemory.rankedAt(currentNetwork.id, root);
+    return rankedAt === null || Date.now() - rankedAt > RERANK_MAX_AGE_MS;
+  },
+  run: (shouldCancel) => runBackgroundRerank(shouldCancel),
+});
+
+async function runBackgroundRerank(shouldCancel: () => boolean): Promise<'done' | 'cancelled' | 'failed'> {
+  const root = await tryResolveZapretPath({ allowScan: false });
+  if (!root) return 'failed';
+  const previous = config.selectedStrategy;
+  const log = (line: { text: string; level: string }): void => sendToolOutput(`[Фон] ${line.text}`, line.level);
+
+  logBypassEvent('rerank', 'Перепроверка конфигов в простое');
+  let outcome: PickBestStrategyOutcome | null = null;
+  // пользователь мог выключить обход или саму перепроверку, пока она шла
+  const stoppedByUser = (): boolean => config.bypassStoppedByUser || config.backgroundRerank === false;
+  autoPickBestStrategyRunning = true;
+  try {
+    outcome = await pickBestStrategyForRoot(root, log, {
+      emitUiEvents: false,
+      shouldCancel: () => shouldCancel() || stoppedByUser(),
+    });
+    saveRankings(root, outcome, false);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    log({ text: `Перепроверка не удалась: ${message}`, level: 'warn' });
+  } finally {
+    autoPickBestStrategyRunning = false;
+  }
+
+  // Прежний конфиг оставляем, пока он открывает всё; иначе берём лучший из свежего рейтинга
+  const rankings = currentRankings(root);
+  const keepPrevious = !!previous && rankings.some((r) => r.strategy === previous && r.failed.length === 0 && rankingPct(r) > 0);
+  const best = outcome && !outcome.cancelled && outcome.best && rankingPct(outcome.best) > 0 ? outcome.best.strategy : null;
+  const next = keepPrevious ? previous : best ?? previous;
+
+  if (config.bypassStoppedByUser) {
+    invalidateStatusCache();
+    void refreshTrayMenu(true);
+    return outcome && !outcome.cancelled ? 'done' : 'cancelled';
+  }
+
+  if (next) {
+    try {
+      await startBypass(root, next, log);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log({ text: `Обход не запустился после перепроверки: ${message}`, level: 'warn' });
+    }
+    setSelectedStrategy(next);
+    if (previous && next !== previous) {
+      logBypassEvent('switched', `Перепроверка: ${strategyLabel(previous)} → ${strategyLabel(next)}`, next);
+    }
+  }
+  // сторож сам поднимет обход, если запуск выше не удался
+  bypassWatchdog.setExpected(true);
+  invalidateStatusCache();
+  mainWindow?.webContents.send('bypass-auto-started');
+  void refreshTrayMenu(true);
+
+  if (!outcome) return 'failed';
+  return outcome.cancelled ? 'cancelled' : 'done';
+}
+
+/** Пользователь вернулся к компьютеру — фоновая перепроверка уже отменяется, дождёмся её */
+async function waitForBackgroundRerank(timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (backgroundRerank.isRunning && Date.now() < deadline) await delay(250);
+  if (backgroundRerank.isRunning) throw new Error('Идёт фоновая перепроверка конфигов — попробуйте через минуту');
+}
+
+/** Сеть сменилась — включаем конфиг, который в ней работал в прошлый раз */
+async function refreshNetwork(initial = false): Promise<void> {
+  // туннель VPN подменяет маршрут по умолчанию — это не новая сеть; посмотрим, когда отключится
+  if (!initial && amneziaVpn.isRunning()) return;
+  const fingerprint = interfacesFingerprint();
+  if (!initial && fingerprint === networkFingerprint) return;
+  networkFingerprint = fingerprint;
+
+  const next = await detectNetwork();
+  const changed = next.id !== currentNetwork.id;
+  currentNetwork = next;
+  const profile = strategyMemory.getProfile(next.id);
+  strategyMemory.touch(next.id, next.label);
+  if (!changed && !initial) return;
+  emitBypassActivity();
+
+  const remembered = profile?.selected ?? null;
+  if (initial || !remembered) {
+    if (!remembered && config.selectedStrategy) {
+      strategyMemory.rememberSelected(next.id, next.label, config.selectedStrategy);
+    }
+    if (!initial) logBypassEvent('network', `Сеть: ${next.label}`);
+    return;
+  }
+
+  logBypassEvent('network', `Сеть: ${next.label}`);
+  bypassWatchdog.deferHealthCheck(20_000);
+  if (remembered === config.selectedStrategy || isBypassAutomationBusy() || bypassWatchdog.isRecovering) return;
+
+  const root = await tryResolveZapretPath({ allowScan: false });
+  if (!root) return;
+  const status = await getStatus(root, { light: true });
+  if (!status.strategies.includes(remembered)) return;
+
+  const previous = config.selectedStrategy;
+  setSelectedStrategy(remembered);
+  if (!status.bypass.running) return;
+
+  try {
+    await startBypass(root, remembered, (line) => sendToolOutput(line.text, line.level));
+    bypassWatchdog.setExpected(true);
+    logBypassEvent(
+      'switched',
+      `${next.label}: ${previous ? `${strategyLabel(previous)} → ` : ''}${strategyLabel(remembered)}`,
+      remembered
+    );
+    notify('Сеть сменилась', `${next.label}: включён конфиг ${strategyLabel(remembered)}, который работал здесь раньше.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Не удалось включить конфиг сети ${next.label}: ${message}`, 'warn');
+  }
+  invalidateStatusCache();
+  mainWindow?.webContents.send('bypass-auto-started');
+  void refreshTrayMenu(true);
+}
+
+/** zapret поставлен заново — старые рейтинги относятся к прежним .bat */
+function onZapretReinstalled(version: string | null): void {
+  strategyMemory.forgetRankings();
+  logBypassEvent('update', version ? `Zapret обновлён до ${version}` : 'Zapret переустановлен');
+  if (config.backgroundRerank !== false) {
+    sendToolOutput('Рейтинг конфигов сброшен — перепроверю их, когда компьютер будет простаивать', 'info');
+  }
+}
+
+async function saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }> {
+  const root = getKnownZapretPath();
+  let running = false;
+  let strategies = 0;
+  if (root) {
+    try {
       const status = await getStatus(root, { light: true });
-      const strategy = config.selectedStrategy ?? status.selectedStrategy;
-      if (!strategy || !status.strategies.includes(strategy)) return null;
-      return strategy;
+      running = status.bypass.running;
+      strategies = status.strategies.length;
+    } catch {
+      /* отчёт нужен и когда zapret сломан */
+    }
+  }
+
+  const redact = [os.homedir()];
+  try {
+    redact.push(os.userInfo().username);
+  } catch {
+    /* без имени пользователя */
+  }
+
+  const report = buildDiagnosticReport({
+    generatedAt: Date.now(),
+    appVersion: getCurrentAppVersion(),
+    platform: `${os.type()} ${os.release()} ${os.arch()}`,
+    isAdmin: isWindowsAdmin(),
+    settings: {
+      autoStartBypass: config.autoStartBypass,
+      launchAtStartup: config.launchAtStartup,
+      autoPickBestStrategy: config.autoPickBestStrategy,
+      bypassAutoRecover: config.bypassAutoRecover,
+      bypassAutoSwitch: config.bypassAutoSwitch,
+      backgroundRerank: config.backgroundRerank,
+      autoUpdateZapret: config.autoUpdateZapret,
+      probeSites: config.probeSites,
+      bypassStoppedByUser: config.bypassStoppedByUser,
+      tgProxyRunning: tgwsProxy.isRunning(),
+      vpnRunning: amneziaVpn.isRunning(),
     },
-    restartBypass: async (root, strategy) => {
-      await startBypass(root, strategy, (line) => sendToolOutput(line.text, line.level));
-    },
-    onOutput: (text, level) => sendToolOutput(text, level),
-    onRecovered: () => {
-      invalidateStatusCache();
-      notify('Обход восстановлен', 'winws.exe перезапущен автоматически.');
-      mainWindow?.webContents.send('bypass-auto-started');
-      void refreshTrayMenu(true);
-    },
-    onGiveUp: () => {
-      invalidateStatusCache();
-      mainWindow?.webContents.send('bypass-watchdog-stopped');
-      notify('Обход остановился', 'winws.exe упал и не перезапустился. Откройте приложение, чтобы проверить конфиг.');
-      void refreshTrayMenu(true);
-    },
+    zapret: { path: root, running, strategy: config.selectedStrategy, strategies },
+    watchdogHealth: bypassWatchdog.currentHealth,
+    network: currentNetwork.label,
+    rankings: root ? currentRankings(root) : [],
+    rankedAt: root ? strategyMemory.rankedAt(currentNetwork.id, root) : null,
+    events: bypassEvents.list(50),
+    log: toolLog,
+    redact,
   });
-  startBypassWatchdog();
+
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const options = {
+    title: 'Сохранить отчёт',
+    defaultPath: path.join(app.getPath('desktop'), `skvoz-report-${stamp}.txt`),
+    filters: [{ name: 'Текст', extensions: ['txt'] }],
+  };
+  const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return { saved: false };
+  fs.writeFileSync(result.filePath, report, 'utf8');
+  shell.showItemInFolder(result.filePath);
+  return { saved: true, path: result.filePath };
+}
+
+function updateTrayIcon(): void {
+  if (!tray) return;
+  const health = bypassWatchdog.currentHealth;
+  const color = trayMenuState.running || health === 'down' ? TRAY_DOT_COLORS[health] : undefined;
+  const key = color ? health : 'plain';
+  let image = trayIconCache.get(key);
+  if (!image) {
+    const base = loadAppIcon(32);
+    image = color ? withStatusDot(base, color) : base;
+    trayIconCache.set(key, image);
+  }
+  tray.setImage(image);
+}
+
+function initBypassAutomation(): void {
+  bypassWatchdog.start();
+  powerMonitor.on('resume', () => {
+    bypassWatchdog.deferHealthCheck(30_000);
+    networkFingerprint = '';
+  });
+  void refreshNetwork(true).catch(() => undefined);
+  networkTimer = setInterval(() => void refreshNetwork().catch(() => undefined), NETWORK_POLL_MS);
+  backgroundRerank.start();
+}
+
+function stopBypassAutomation(): void {
+  bypassWatchdog.stop();
+  backgroundRerank.stop();
+  if (networkTimer) {
+    clearInterval(networkTimer);
+    networkTimer = null;
+  }
 }
 
 let config = loadConfig();
@@ -322,7 +660,8 @@ function sendBootstrap(state: BootstrapState): void {
 let downloadProgressLastAt = 0;
 let downloadProgressLastKey = '';
 
-function sendDownloadProgress(progress: DownloadProgress): void {
+/** background — автообновление в фоне: интерфейс показывает прогресс, но не блокируется */
+function sendDownloadProgress(progress: DownloadProgress, background = false): void {
   const force =
     progress.stage === 'done' ||
     progress.stage === 'error' ||
@@ -338,7 +677,7 @@ function sendDownloadProgress(progress: DownloadProgress): void {
 
   downloadProgressLastAt = now;
   downloadProgressLastKey = key;
-  mainWindow?.webContents.send('download-progress', progress);
+  mainWindow?.webContents.send('download-progress', { ...progress, background });
 }
 
 function isValidZapretPath(zapretPath: string): boolean {
@@ -432,8 +771,10 @@ async function ensureBootstrap(force = false): Promise<void> {
         sendDownloadProgress
       );
 
+      const reinstalled = result.state.autoFixed && result.path !== config.zapretPath;
       config.zapretPath = result.path;
       config.bootstrapDone = true;
+      if (reinstalled) onZapretReinstalled(result.state.selected?.version ?? null);
       config.skipAutoBootstrap = false;
       saveConfig(config);
       bootstrapState = result.state;
@@ -504,9 +845,12 @@ async function autoUpdateZapret(): Promise<void> {
       await delay(900);
     }
 
-    const result = await downloadOfficialZapret(config.installBase, root, sendDownloadProgress);
+    const result = await downloadOfficialZapret(config.installBase, root, (progress) =>
+      sendDownloadProgress(progress, true)
+    );
     config.zapretPath = result.installPath;
     saveConfig(config);
+    onZapretReinstalled(result.version);
     sanitizeSelectedStrategy(result.installPath);
     invalidateStatusCache();
 
@@ -654,7 +998,7 @@ function scheduleTraySync(): void {
 
 // ── Мини-окно у трея ──────────────────────────────────────────────────
 
-const TRAY_WINDOW_SIZE = { width: 330, height: 386 };
+const TRAY_WINDOW_SIZE = { width: 330, height: 408 };
 let trayWindow: BrowserWindow | null = null;
 let trayWindowHiddenAt = 0;
 
@@ -750,7 +1094,7 @@ function createTray(): void {
 }
 
 function trayTooltip(): string {
-  const zapret = trayMenuState.running ? 'обход включён' : 'обход выключен';
+  const zapret = trayMenuState.running ? `обход включён (${HEALTH_LABEL[bypassWatchdog.currentHealth]})` : 'обход выключен';
   const tg = tgwsProxy.isRunning() ? 'TG proxy работает' : 'TG proxy выключен';
   const vpn = amneziaVpn.isRunning() ? 'VPN включён' : 'VPN выключен';
   return `Skvoz — ${zapret}, ${tg}, ${vpn}`;
@@ -764,6 +1108,7 @@ async function refreshTrayMenu(force = false): Promise<void> {
     let running = false;
     let canStart = false;
     let strategy: string | null = null;
+    let strategies: string[] = [];
 
     try {
       const zapretPath = getKnownZapretPath();
@@ -772,6 +1117,7 @@ async function refreshTrayMenu(force = false): Promise<void> {
         const status = await getStatus(zapretPath, { light: true });
         running = status.bypass.running;
         strategy = config.selectedStrategy ?? status.selectedStrategy;
+        strategies = status.strategies;
         if (!running) {
           canStart =
             isWindowsAdmin() &&
@@ -784,32 +1130,63 @@ async function refreshTrayMenu(force = false): Promise<void> {
       /* keep menu usable */
     }
 
-    trayMenuState = { running, canStart, strategy };
+    trayMenuState = { running, canStart, strategy, strategies };
     trayMenuStateAt = Date.now();
   }
 
+  rebuildTrayMenu();
+}
+
+/** Меню без нового опроса zapret — когда сменилось только состояние сторожа */
+function rebuildTrayMenu(): void {
+  if (!tray) return;
   tray.setContextMenu(buildTrayMenu());
   tray.setToolTip(trayTooltip());
+  updateTrayIcon();
 }
 
 function buildTrayMenu(): Menu {
-  const { running, canStart, strategy } = trayMenuState;
+  const { running, canStart, strategy, strategies } = trayMenuState;
   const tgRunning = tgwsProxy.isRunning();
   const tg = tgwsProxy.getConfig();
   const vpnRunning = amneziaVpn.isRunning();
   const vpnSummary = amneziaVpn.getSummary();
-  const strategyLabel = strategy ? strategy.replace(/\.bat$/i, '') : 'конфиг не выбран';
+  const health = bypassWatchdog.currentHealth;
+  const since = running ? bypassEvents.runningSince() : null;
+  const automationBusy = isBypassAutomationBusy() || bypassWatchdog.isRecovering;
+
+  const bypassState = running ? HEALTH_LABEL[health] : 'выключен';
+  const networkLine = [
+    currentNetwork.id !== UNKNOWN_NETWORK.id ? currentNetwork.label : null,
+    since ? `работает с ${formatClock(since.at)}` : null,
+  ].filter(Boolean).join(' · ');
+
+  const strategyItems: Electron.MenuItemConstructorOptions[] = strategies.length
+    ? strategies.map((item) => ({
+        label: strategyLabel(item),
+        type: 'radio',
+        checked: item === strategy,
+        enabled: !automationBusy,
+        click: () => void trayChooseStrategy(item),
+      }))
+    : [{ label: 'Конфиги не найдены', enabled: false }];
 
   return Menu.buildFromTemplate([
     { label: 'Открыть Skvoz', click: () => focusMainWindow() },
     { type: 'separator' },
-    { label: `Zapret: ${running ? 'включён' : 'выключен'} · ${strategyLabel}`, enabled: false },
+    { label: `Обход: ${bypassState}`, enabled: false },
+    ...(networkLine ? [{ label: networkLine, enabled: false }] : []),
     running
       ? { label: 'Выключить обход', click: () => void traySetBypass(false) }
       : { label: 'Включить обход', enabled: canStart, click: () => void traySetBypass(true) },
-    { label: 'Перезапустить обход', enabled: running, click: () => void trayRestartBypass() },
+    { label: 'Перезапустить обход', enabled: running && !automationBusy, click: () => void trayRestartBypass() },
+    {
+      label: `Конфиг: ${strategy ? strategyLabel(strategy) : 'не выбран'}`,
+      enabled: strategies.length > 0,
+      submenu: strategyItems,
+    },
     { type: 'separator' },
-    { label: `Telegram proxy: ${tgRunning ? `работает · ${tg.host}:${tg.port}` : 'выключен'}`, enabled: false },
+    { label: `Telegram-прокси: ${tgRunning ? `работает · ${tg.host}:${tg.port}` : 'выключен'}`, enabled: false },
     {
       label: tgRunning ? 'Выключить прокси' : 'Включить прокси',
       click: () => void traySetTgws(!tgRunning),
@@ -822,18 +1199,59 @@ function buildTrayMenu(): Menu {
       },
     },
     { type: 'separator' },
-    { label: `VPN: ${vpnRunning ? `включён · ${vpnSummary?.endpoint ?? ''}` : 'выключен'}`, enabled: false },
+    { label: `VPN: ${vpnRunning ? `включён · ${vpnSummary?.endpoint ?? ''}` : amneziaVpn.isConfigured() ? 'выключен' : 'нет конфига'}`, enabled: false },
     {
       label: vpnRunning ? 'Выключить VPN' : 'Включить VPN',
       enabled: vpnRunning || amneziaVpn.isConfigured(),
       click: () => void traySetVpn(!vpnRunning),
     },
     { type: 'separator' },
+    { label: 'Настройки…', click: () => focusMainWindow('settings') },
+    { label: 'Журнал и диагностика…', click: () => focusMainWindow('tools') },
+    { type: 'separator' },
     {
       label: 'Выход',
       click: () => quitApp(),
     },
   ]);
+}
+
+function formatClock(timestamp: number): string {
+  const date = new Date(timestamp);
+  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} ${time}`;
+}
+
+/** Смена конфига из трея; если обход работает — перезапускаем его с новым */
+async function trayChooseStrategy(strategy: string): Promise<void> {
+  try {
+    if (isBypassAutomationBusy() || bypassWatchdog.isRecovering) {
+      throw new Error('Сейчас идёт подбор или восстановление — попробуйте через минуту');
+    }
+    const zapretPath = await requireZapretPath();
+    const status = await getStatus(zapretPath);
+    if (!status.strategies.includes(strategy)) throw new Error(`Конфиг не найден: ${strategy}`);
+    const previous = config.selectedStrategy;
+    setSelectedStrategy(strategy);
+    if (status.bypass.running && strategy !== previous) {
+      const log = (line: { text: string; level: string }): void => sendToolOutput(line.text, line.level);
+      sendToolOutput(`Смена конфига из трея: ${strategyLabel(strategy)}`, 'info');
+      await stopBypass(log);
+      await delay(600);
+      await startBypass(zapretPath, strategy, log);
+      if (!(await waitForBypassRunning())) throw new Error('winws.exe не запустился с новым конфигом');
+      markBypassExpectedRunning(true);
+    }
+    invalidateStatusCache();
+    mainWindow?.webContents.send('bypass-auto-started');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Ошибка: ${message}`, 'warn');
+    notify('Конфиг не сменился', message);
+  } finally {
+    await refreshTrayMenu(true);
+  }
 }
 
 async function traySetTgws(enable: boolean): Promise<void> {
@@ -902,6 +1320,7 @@ async function trayRestartBypass(): Promise<void> {
 async function traySetBypass(enable: boolean): Promise<void> {
   try {
     if (enable) {
+      await waitForBackgroundRerank();
       const zapretPath = await requireZapretPath();
       const status = await getStatus(zapretPath);
       const strategy = config.selectedStrategy ?? status.selectedStrategy;
@@ -1047,6 +1466,11 @@ async function requireZapretPath(): Promise<string> {
 }
 
 function sendToolOutput(text: string, level: string): void {
+  // служебные строки подбора (JSON для интерфейса) в отчёт не нужны
+  if (!text.startsWith('__')) {
+    toolLog.push({ at: Date.now(), level, text });
+    if (toolLog.length > TOOL_LOG_LIMIT) toolLog.splice(0, toolLog.length - TOOL_LOG_LIMIT);
+  }
   mainWindow?.webContents.send('tool-output', { text, level });
 }
 
@@ -1107,15 +1531,17 @@ interface PickJobResult {
 
 interface LastTestResults extends TestResultPayload {
   at: string;
+  /** папка zapret, на которой снят рейтинг; в старых файлах её нет */
+  root?: string;
 }
 
 function lastTestResultsPath(): string {
   return path.join(app.getPath('userData'), 'last-test.json');
 }
 
-function saveLastTestResults(payload: TestResultPayload): void {
+function saveLastTestResults(payload: TestResultPayload, root: string): void {
   try {
-    const record: LastTestResults = { ...payload, at: new Date().toISOString() };
+    const record: LastTestResults = { ...payload, at: new Date().toISOString(), root };
     fs.writeFileSync(lastTestResultsPath(), JSON.stringify(record, null, 2), 'utf8');
   } catch {
     /* результаты — только для удобства */
@@ -1156,6 +1582,9 @@ async function runPickBestStrategyJob(options: { quick?: boolean } = {}): Promis
   if (!isWindowsAdmin()) {
     throw new Error('Нужны права администратора для подбора конфига');
   }
+  if (bypassWatchdog.isRecovering || backgroundRerank.isRunning) {
+    throw new Error('Идёт автовосстановление обхода — попробуйте через минуту');
+  }
 
   pickBestStrategyCancelRequested = false;
   autoPickBestStrategyAttempted = true;
@@ -1172,7 +1601,15 @@ async function runPickBestStrategyJob(options: { quick?: boolean } = {}): Promis
       }
     );
     if (outcome.rankings.length > 0) {
-      saveLastTestResults({ ...outcome, quick: !!options.quick });
+      // ручной подбор показываем в «последних результатах» даже прерванным
+      saveLastTestResults({ ...outcome, quick: !!options.quick }, zapretPath);
+      strategyMemory.saveRankings(
+        currentNetwork.id,
+        currentNetwork.label,
+        zapretPath,
+        outcome.rankings,
+        !options.quick && !outcome.cancelled
+      );
     }
 
     const best = outcome.best;
@@ -1182,8 +1619,7 @@ async function runPickBestStrategyJob(options: { quick?: boolean } = {}): Promis
     }
 
     if (best?.strategy && status.strategies.includes(best.strategy)) {
-      config.selectedStrategy = best.strategy;
-      saveConfig(config);
+      setSelectedStrategy(best.strategy);
       mainWindow?.webContents.send('strategy-auto-picked', {
         strategy: best.strategy,
         score: best.score,
@@ -1332,9 +1768,9 @@ function registerIpc(): void {
     return { autoUpdateZapret: config.autoUpdateZapret };
   });
 
-  ipcMain.handle('show-main-window', () => {
+  ipcMain.handle('show-main-window', (_e, view?: string) => {
     trayWindow?.hide();
-    focusMainWindow();
+    focusMainWindow(typeof view === 'string' ? view : undefined);
     return { ok: true };
   });
 
@@ -1343,6 +1779,36 @@ function registerIpc(): void {
     saveConfig(config);
     return { bypassAutoRecover: config.bypassAutoRecover };
   });
+
+  ipcMain.handle('set-bypass-auto-switch', (_e, enabled: boolean) => {
+    config.bypassAutoSwitch = !!enabled;
+    saveConfig(config);
+    return { bypassAutoSwitch: config.bypassAutoSwitch };
+  });
+
+  ipcMain.handle('set-background-rerank', (_e, enabled: boolean) => {
+    config.backgroundRerank = !!enabled;
+    saveConfig(config);
+    return { backgroundRerank: config.backgroundRerank };
+  });
+
+  ipcMain.handle('set-probe-sites', (_e, sites: unknown) => {
+    const raw = Array.isArray(sites) ? sites.filter((s): s is string => typeof s === 'string') : [];
+    const valid = raw.map((s) => s.trim()).filter((s) => s && normalizeProbeSite(s));
+    config.probeSites = [...new Set(valid)].slice(0, 5);
+    saveConfig(config);
+    return { probeSites: config.probeSites, rejected: raw.filter((s) => s.trim() && !normalizeProbeSite(s)) };
+  });
+
+  ipcMain.handle('get-bypass-activity', () => ({
+    health: bypassWatchdog.currentHealth,
+    healthLabel: HEALTH_LABEL[bypassWatchdog.currentHealth],
+    network: currentNetwork.label,
+    since: bypassEvents.runningSince(),
+    events: bypassEvents.list(15),
+  }));
+
+  ipcMain.handle('save-diagnostic-report', async () => saveDiagnosticReport());
 
   ipcMain.handle('set-minimize-to-tray', (_e, enabled: boolean) => {
     config.minimizeToTray = !!enabled;
@@ -1505,8 +1971,7 @@ function registerIpc(): void {
         throw new Error(`Конфиг не найден: ${strategy}`);
       }
     }
-    config.selectedStrategy = strategy;
-    saveConfig(config);
+    setSelectedStrategy(strategy);
     return config;
   });
 
@@ -1527,7 +1992,10 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('start-bypass', async () => {
+    const afterRerank = backgroundRerank.isRunning;
+    await waitForBackgroundRerank();
     const zapretPath = await requireZapretPath();
+    if (afterRerank) invalidateStatusCache();
     const status = await getStatus(zapretPath);
     const strategy = config.selectedStrategy ?? status.selectedStrategy;
     if (!strategy) throw new Error('Стратегия не выбрана');
@@ -1535,6 +2003,13 @@ function registerIpc(): void {
       throw new Error(`Стратегия не найдена: ${strategy}`);
     }
     if (status.bypass.running) {
+      // перепроверка, закончившись, сама подняла обход — это и было нужно
+      if (afterRerank) {
+        clearBypassStoppedByUser();
+        markBypassExpectedRunning(true);
+        await refreshTrayMenu(true);
+        return { ok: true };
+      }
       throw new Error('Обход уже запущен');
     }
     if (!status.isOfficial) {
@@ -1554,6 +2029,7 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('restart-bypass', async () => {
+    await waitForBackgroundRerank();
     const zapretPath = await requireZapretPath();
     const status = await getStatus(zapretPath);
     const strategy = config.selectedStrategy ?? status.selectedStrategy;
@@ -1782,6 +2258,7 @@ function registerIpc(): void {
     config.bootstrapDone = true;
     config.skipAutoBootstrap = false;
     saveConfig(config);
+    onZapretReinstalled(result.version);
 
     bootstrapState = {
       stage: 'ready',
@@ -1933,10 +2410,21 @@ function registerIpc(): void {
   });
 }
 
-function focusMainWindow(): void {
+/** view — страница, которую открыть (из меню трея: «Настройки», «Журнал») */
+function focusMainWindow(view?: string): void {
+  const navigate = (): void => {
+    if (!view || !mainWindow) return;
+    const target = mainWindow;
+    if (target.webContents.isLoading()) {
+      target.webContents.once('did-finish-load', () => target.webContents.send('navigate', view));
+    } else {
+      target.webContents.send('navigate', view);
+    }
+  };
   const show = (): void => {
     if (!mainWindow) {
       createWindow();
+      navigate();
       return;
     }
 
@@ -1945,6 +2433,7 @@ function focusMainWindow(): void {
     }
     mainWindow.show();
     mainWindow.focus();
+    navigate();
   };
 
   if (app.isReady()) {
@@ -1989,13 +2478,13 @@ if (!gotSingleInstanceLock) {
     }
 
     void syncLaunchAtStartup(config.launchAtStartup);
-    initBypassWatchdog();
+    initBypassAutomation();
     initTgwsProxy();
     initVpn();
     scheduleZapretAutoUpdate();
 
     app.on('before-quit', () => {
-      stopBypassWatchdog();
+      stopBypassAutomation();
       void tgwsProxy.stop();
       // Без окна Skvoz VPN нечем выключить — гасим его вместе с приложением
       amneziaVpn.stopOnQuit();

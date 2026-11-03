@@ -109,7 +109,7 @@ async function pingHost(host: string): Promise<'ok' | 'error'> {
   }
 }
 
-function loadTargets(root: string): TestTarget[] {
+export function loadTargets(root: string): TestTarget[] {
   const file = path.join(root, 'utils', 'targets.txt');
   const targets: TestTarget[] = [];
 

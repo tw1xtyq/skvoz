@@ -35,6 +35,8 @@ interface DownloadProgress {
   stage: string;
   percent: number;
   message: string;
+  /** автообновление zapret в фоне */
+  background?: boolean;
 }
 
 interface AppUpdateInfo {
@@ -142,6 +144,9 @@ interface ZapretApi {
       minimizeToTray?: boolean;
       autoUpdateZapret?: boolean;
       bypassAutoRecover?: boolean;
+      bypassAutoSwitch?: boolean;
+      backgroundRerank?: boolean;
+      probeSites?: string[];
       skipAutoBootstrap?: boolean;
     };
     status: StatusPayload;
@@ -152,6 +157,13 @@ interface ZapretApi {
   setMinimizeToTray(enabled: boolean): Promise<{ minimizeToTray: boolean }>;
   setAutoUpdateZapret(enabled: boolean): Promise<{ autoUpdateZapret: boolean }>;
   setBypassAutoRecover(enabled: boolean): Promise<{ bypassAutoRecover: boolean }>;
+  setBypassAutoSwitch(enabled: boolean): Promise<{ bypassAutoSwitch: boolean }>;
+  setBackgroundRerank(enabled: boolean): Promise<{ backgroundRerank: boolean }>;
+  setProbeSites(sites: string[]): Promise<{ probeSites: string[]; rejected: string[] }>;
+  getBypassActivity(): Promise<BypassActivity>;
+  saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }>;
+  onBypassActivityChanged(callback: () => void): () => void;
+  onNavigate(callback: (view: string) => void): () => void;
   getBootstrapState(): Promise<BootstrapState | null>;
   rescanZapret(): Promise<BootstrapState | null>;
   getStatus(): Promise<StatusPayload>;
@@ -310,6 +322,10 @@ const els = {
   officialBadge: document.getElementById('officialBadge')!,
   zapretPath: document.getElementById('zapretPath')!,
   versionLine: document.getElementById('versionLine')!,
+  updZapretVersion: document.getElementById('updZapretVersion')!,
+  updAppVersion: document.getElementById('updAppVersion')!,
+  btnAppChangelog: document.getElementById('btnAppChangelog') as HTMLButtonElement,
+  updatesLockHint: document.getElementById('updatesLockHint')!,
   btnRescan: document.getElementById('btnRescan') as HTMLButtonElement,
   btnRescanEmpty: document.getElementById('btnRescanEmpty') as HTMLButtonElement,
   btnChangePath: document.getElementById('btnChangePath') as HTMLButtonElement,
@@ -348,7 +364,20 @@ const els = {
   minimizeToTrayToggle: document.getElementById('minimizeToTrayToggle') as HTMLInputElement,
   autoUpdateZapretToggle: document.getElementById('autoUpdateZapretToggle') as HTMLInputElement,
   bypassAutoRecoverToggle: document.getElementById('bypassAutoRecoverToggle') as HTMLInputElement,
+  bypassAutoSwitchToggle: document.getElementById('bypassAutoSwitchToggle') as HTMLInputElement,
+  backgroundRerankToggle: document.getElementById('backgroundRerankToggle') as HTMLInputElement,
+  probeSitesInput: document.getElementById('probeSitesInput') as HTMLInputElement,
+  bypassActivity: document.getElementById('bypassActivity')!,
+  bypassHealthDot: document.getElementById('bypassHealthDot')!,
+  bypassActivityText: document.getElementById('bypassActivityText')!,
+  bypassHistoryList: document.getElementById('bypassHistoryList')!,
+  btnSaveReport: document.getElementById('btnSaveReport') as HTMLButtonElement,
   quickBypassMeta: document.getElementById('quickBypassMeta')!,
+  bypassStatusDot: document.getElementById('bypassStatusDot')!,
+  bypassDeckTitle: document.getElementById('bypassDeckTitle')!,
+  bypassDeckMeta: document.getElementById('bypassDeckMeta')!,
+  btnBypassDeckToggle: document.getElementById('btnBypassDeckToggle') as HTMLButtonElement,
+  btnVpnDeckToggle: document.getElementById('btnVpnDeckToggle') as HTMLButtonElement,
   quickTgMeta: document.getElementById('quickTgMeta')!,
   userListKind: document.getElementById('userListKind') as HTMLSelectElement,
   userListHint: document.getElementById('userListHint')!,
@@ -380,6 +409,8 @@ const els = {
   pathLockHint: document.getElementById('pathLockHint')!,
   runtimeSettingsGroup: document.getElementById('runtimeSettingsGroup')!,
   settingsLockHint: document.getElementById('settingsLockHint')!,
+  userListsGroup: document.getElementById('userListsGroup')!,
+  listsLockHint: document.getElementById('listsLockHint')!,
   configStrategyGroup: document.getElementById('configStrategyGroup')!,
   configTestsGroup: document.getElementById('configTestsGroup')!,
   configLockHint: document.getElementById('configLockHint')!,
@@ -627,13 +658,17 @@ async function resumeBypassAfterTests(): Promise<void> {
 }
 
 async function runPickBestStrategy(options: { auto?: boolean; quick?: boolean } = {}): Promise<void> {
-  if (strategyPickActive || busy) return;
+  if (strategyPickActive) return;
+  if (busy) {
+    hintBusy();
+    return;
+  }
   const quick = options.auto ? true : !!options.quick;
 
   const paused = options.auto ? false : await pauseBypassForTests();
   if (paused === null) return;
 
-  setBusy(true);
+  setBusy(true, 'Подбор конфига');
   setStrategyPickActive(true);
   openStrategyPickOverlay(!!options.auto, quick);
   resetTestUi();
@@ -792,7 +827,10 @@ async function loadLastTestResults(): Promise<void> {
 }
 
 async function applyStrategy(name: string): Promise<void> {
-  if (busy) return;
+  if (busy) {
+    hintBusy();
+    return;
+  }
   await runAction('Стратегия', () => api.setStrategy(name));
   els.strategySelect.value = name;
   toast(`Конфиг: ${name.replace('.bat', '')}`, 'success');
@@ -823,6 +861,7 @@ function setRuntimeLock(locked: boolean): void {
   const groups = [
     els.pathActionsGroup,
     els.runtimeSettingsGroup,
+    els.userListsGroup,
     els.configStrategyGroup,
     els.fullRemoveGroup,
   ];
@@ -831,6 +870,8 @@ function setRuntimeLock(locked: boolean): void {
   }
   els.pathLockHint.classList.toggle('hidden', !locked);
   els.settingsLockHint.classList.toggle('hidden', !locked);
+  els.listsLockHint.classList.toggle('hidden', !locked);
+  els.updatesLockHint.classList.toggle('hidden', !locked);
   els.configLockHint.classList.toggle('hidden', !locked);
 }
 
@@ -908,18 +949,27 @@ function updateControls(status: StatusPayload | null): void {
     button.disabled = els.userListQuickAdd.disabled;
   });
   els.checkUpdatesToggle.disabled = pickLocked || busy || !hasPath || runningLocked;
-  els.launchAtStartupToggle.disabled = pickLocked || busy;
-  els.autoStartBypassToggle.disabled = pickLocked || busy;
-  els.autoPickStrategyToggle.disabled = pickLocked || busy;
-  els.minimizeToTrayToggle.disabled = pickLocked || busy;
-  els.autoUpdateZapretToggle.disabled = pickLocked || busy;
-  els.bypassAutoRecoverToggle.disabled = pickLocked || busy;
+  els.launchAtStartupToggle.disabled = pickLocked;
+  els.autoStartBypassToggle.disabled = pickLocked;
+  els.autoPickStrategyToggle.disabled = pickLocked;
+  els.minimizeToTrayToggle.disabled = pickLocked;
+  els.autoUpdateZapretToggle.disabled = pickLocked;
+  els.bypassAutoRecoverToggle.disabled = pickLocked;
+  // переключение работает только внутри автовосстановления
+  els.bypassAutoSwitchToggle.disabled = pickLocked || !els.bypassAutoRecoverToggle.checked;
+  els.backgroundRerankToggle.disabled = pickLocked;
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
   els.btnQuickBypass.disabled = pickLocked || busy || (running ? !hasPath : !canStart);
   els.btnQuickBypass.textContent = running ? 'Остановить' : 'Включить';
+  els.btnBypassDeckToggle.disabled = els.btnQuickBypass.disabled;
+  els.btnBypassDeckToggle.textContent = running ? 'Остановить' : 'Запустить';
+  els.btnBypassDeckToggle.classList.toggle('btn-glow', !running);
+  els.btnBypassDeckToggle.classList.toggle('btn-soft', running);
   els.btnQuickTg.disabled = pickLocked || busy;
+  els.btnTgToggle.disabled = els.btnQuickTg.disabled;
   els.btnQuickVpn.disabled = pickLocked || vpnBusy;
+  els.btnVpnDeckToggle.disabled = els.btnQuickVpn.disabled;
   updateAdminHint(status);
 }
 
@@ -932,10 +982,30 @@ function updateQuickBypass(status: StatusPayload | null): void {
   els.quickBypassText.textContent = running ? 'Защита включена' : ready ? 'Защита выключена' : 'Zapret не найден';
   const strategy = status?.selectedStrategy?.replace(/\.bat$/i, '');
   els.quickBypassMeta.textContent = ready && strategy ? `Конфиг: ${strategy}` : '';
+
+  els.bypassStatusDot.classList.toggle('is-live', running);
+  els.bypassDeckTitle.textContent = running ? 'Обход включён' : 'Обход выключен';
+  els.bypassDeckMeta.textContent = running
+    ? `Конфиг: ${strategy ?? '—'}`
+    : strategy
+      ? `Запустится с конфигом ${strategy}`
+      : 'Выберите конфиг ниже';
 }
 
-function setBusy(value: boolean): void {
+let busyLabel = '';
+let busyHintAt = 0;
+
+/** Клик во время другой операции раньше молча терялся — теперь говорим, чего ждём */
+function hintBusy(): void {
+  const now = Date.now();
+  if (now - busyHintAt < 1500) return;
+  busyHintAt = now;
+  toast(busyLabel ? `Подождите, идёт: ${busyLabel.toLowerCase()}` : 'Подождите, идёт другая операция', 'info');
+}
+
+function setBusy(value: boolean, label = ''): void {
   busy = value;
+  busyLabel = value ? label : '';
   setActionBusy(value);
   updateControls(currentStatus);
   syncCustomSelectsDisabled(currentStatus);
@@ -1011,7 +1081,7 @@ function renderUserListChips(kind: UserListKind, highlight: string[] = []): void
 async function removeUserListEntry(kind: UserListKind, entry: string): Promise<void> {
   if (busy || !currentStatus?.pathsValid || !userListsCache) return;
   const remaining = userListEntries(userListsCache[kind]).filter((line) => line.toLowerCase() !== entry.toLowerCase());
-  setBusy(true);
+  setBusy(true, 'Сохранение списка');
   try {
     const result = await api.saveUserList(kind, remaining.join('\n'));
     userListsCache = result.lists;
@@ -1059,9 +1129,13 @@ function userListApplyHint(running: boolean): void {
 }
 
 async function saveUserListFromEditor(): Promise<void> {
-  if (busy || !currentStatus?.pathsValid) return;
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  if (!currentStatus?.pathsValid) return;
   const kind = currentUserListKind();
-  setBusy(true);
+  setBusy(true, 'Сохранение списка');
   try {
     const result = await api.saveUserList(kind, els.userListEditor.value);
     userListsCache = result.lists;
@@ -1076,12 +1150,16 @@ async function saveUserListFromEditor(): Promise<void> {
 }
 
 async function addUserListQuick(): Promise<void> {
-  if (busy || !currentStatus?.pathsValid) return;
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  if (!currentStatus?.pathsValid) return;
   const entry = els.userListQuickAdd.value.trim();
   if (!entry) return;
 
   const kind = currentUserListKind();
-  setBusy(true);
+  setBusy(true, 'Сохранение списка');
   try {
     const result = await api.addUserListEntries(kind, [entry]);
     userListsCache = result.lists;
@@ -1138,6 +1216,7 @@ async function refreshAppVersionLine(): Promise<void> {
   try {
     const version = await api.getAppVersion();
     els.appVersionLine.textContent = `Skvoz v${version}`;
+    els.updAppVersion.textContent = `Skvoz v${version}`;
   } catch {
     els.appVersionLine.textContent = 'Skvoz';
   }
@@ -1147,7 +1226,7 @@ async function installAppUpdate(): Promise<void> {
   if (busy || appUpdateInProgress || !pendingAppUpdateInfo?.latest) return;
 
   const latest = pendingAppUpdateInfo.latest;
-  setBusy(true);
+  setBusy(true, 'Обновление Skvoz');
   appUpdateInProgress = true;
   els.btnInstallAppUpdate.textContent = 'Скачиваем…';
   setGlobalLoad({
@@ -1209,6 +1288,24 @@ function setDownloadingUi(active: boolean, message?: string): void {
   els.btnChangePathEmpty.disabled = active || busy;
 }
 
+let globalLoadHideTimer: number | null = null;
+
+function cancelGlobalLoadHide(): void {
+  if (globalLoadHideTimer !== null) {
+    window.clearTimeout(globalLoadHideTimer);
+    globalLoadHideTimer = null;
+  }
+}
+
+/** Скрыть карточку загрузки, если за это время не началась новая */
+function scheduleGlobalLoadHide(ms: number): void {
+  cancelGlobalLoadHide();
+  globalLoadHideTimer = window.setTimeout(() => {
+    globalLoadHideTimer = null;
+    setGlobalLoad({ visible: false });
+  }, ms);
+}
+
 function showDownloadProgress(progress: DownloadProgress): void {
   const stage = mapDownloadStage(progress.stage);
   if (appUpdateInProgress) {
@@ -1224,6 +1321,8 @@ function showDownloadProgress(progress: DownloadProgress): void {
     });
     return;
   }
+  // Фоновое автообновление: прогресс видно, но работать с приложением можно
+  const blocking = !progress.background;
   if (!currentStatus?.pathsValid) {
     setDownloadingUi(true, progress.message);
   }
@@ -1231,38 +1330,42 @@ function showDownloadProgress(progress: DownloadProgress): void {
   if (progress.stage === 'done') {
     setGlobalLoad({
       visible: true,
-      title: 'Zapret установлен',
+      title: progress.background ? 'Zapret обновлён' : 'Zapret установлен',
       message: progress.message,
       percent: 100,
       stage: 'done',
     });
-    window.setTimeout(() => setGlobalLoad({ visible: false }), 1400);
+    scheduleGlobalLoadHide(1400);
     setHeroLoading(false);
     setDownloadingUi(false);
-    els.statusText.textContent = 'Готово';
+    if (!progress.background) els.statusText.textContent = 'Готово';
     return;
   }
 
   if (progress.stage === 'error') {
     setGlobalLoad({
       visible: true,
-      title: 'Ошибка загрузки',
+      title: progress.background ? 'Автообновление zapret не удалось' : 'Ошибка загрузки',
       message: progress.message,
       stage: 'error',
     });
+    // текст ошибки остаётся в журнале и баннере — карточку убираем, чтобы не висела
+    scheduleGlobalLoadHide(8000);
     setHeroLoading(false);
     setDownloadingUi(false, progress.message);
-    els.statusText.textContent = 'Ошибка';
+    if (!progress.background) els.statusText.textContent = 'Ошибка';
     return;
   }
 
+  cancelGlobalLoadHide();
   setGlobalLoad({
     visible: true,
-    title: stage === 'scan' ? 'Поиск zapret' : 'Загрузка zapret',
+    title: progress.background ? 'Обновление zapret' : stage === 'scan' ? 'Поиск zapret' : 'Загрузка zapret',
     message: progress.message,
     percent: progress.percent,
     stage,
     indeterminate: stage === 'scan' && progress.percent < 1,
+    blocking,
   });
 
   if (!currentStatus?.pathsValid) {
@@ -1343,8 +1446,11 @@ function setLogExpanded(expanded: boolean): void {
 }
 
 async function runTool(label: string, fn: () => Promise<{ ok: boolean }>, options?: { isTest?: boolean }): Promise<void> {
-  if (busy) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  setBusy(true, label);
   if (options?.isTest) {
     resetTestUi();
     testQuietMode = true;
@@ -1442,16 +1548,22 @@ function handleToolOutput(line: { text: string; level: string }): void {
   if (!text || /^╨/.test(text)) return;
   appendJournalLine(text, level);
 }
-async function runAction(label: string, fn: () => Promise<unknown>): Promise<void> {
-  if (busy) return;
-  setBusy(true);
+/** true — действие выполнено; false — занято другой операцией или упало с ошибкой */
+async function runAction(label: string, fn: () => Promise<unknown>): Promise<boolean> {
+  if (busy) {
+    hintBusy();
+    return false;
+  }
+  setBusy(true, label);
   log(label, 'info');
   try {
     await fn();
     log('Готово', 'success');
     await refreshStatus();
+    return true;
   } catch (err) {
     reportFailure(err);
+    return false;
   } finally {
     setBusy(false);
   }
@@ -1489,6 +1601,10 @@ function renderStatus(status: StatusPayload, configPath: string): void {
 
   els.zapretPath.textContent = configPath || '—';
 
+  els.updZapretVersion.textContent = status.pathsValid
+    ? `Zapret v${status.installedVersion ?? '?'}${status.isOfficial ? '' : ' · неофициальная сборка'}`
+    : 'Zapret не найден';
+
   if (!status.pathsValid) {
     setTag(els.officialBadge, 'Не найден', 'bad');
     setTag(els.versionLine, '—', 'muted');
@@ -1501,9 +1617,12 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   }
 
   const running = status.bypass.running;
-  els.statusBadge.className = `status-chip ${
-    running ? 'running' : status.pathsValid && status.isOfficial ? '' : 'warning'
-  }`;
+  // classList, а не className: иначе слетают status-pill (кликабельность) и is-loading
+  els.statusBadge.classList.toggle('running', running);
+  els.statusBadge.classList.toggle('warning', !running && !(status.pathsValid && status.isOfficial));
+  els.statusBadge.title = running
+    ? `Обход включён${status.selectedStrategy ? ` · ${status.selectedStrategy.replace(/\.bat$/i, '')}` : ''}`
+    : 'Обход выключен — открыть страницу обхода';
   document.body.classList.toggle('app-running', running);
 
   updatePowerButton(running, true);
@@ -1559,6 +1678,79 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   syncCustomSelectsDisabled(status);
 }
 
+type BypassHealth = 'off' | 'checking' | 'ok' | 'degraded' | 'recovering' | 'down';
+
+interface BypassActivity {
+  health: BypassHealth;
+  healthLabel: string;
+  network: string;
+  since: { at: number; strategy: string | null } | null;
+  events: { at: number; kind: string; text: string; strategy?: string | null }[];
+}
+
+const HEALTH_DOT_CLASS: Partial<Record<BypassHealth, string>> = {
+  ok: 'is-ok',
+  degraded: 'is-warn',
+  recovering: 'is-warn',
+  down: 'is-bad',
+};
+
+const EVENT_TONE: Record<string, string> = {
+  crashed: 'is-warn',
+  blocked: 'is-warn',
+  'gave-up': 'is-bad',
+  restored: 'is-ok',
+  switched: 'is-ok',
+};
+
+let lastBypassRunning = false;
+
+function formatEventTime(at: number): string {
+  const date = new Date(at);
+  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${time}`;
+}
+
+async function refreshBypassActivity(running = lastBypassRunning): Promise<void> {
+  lastBypassRunning = running;
+  let activity: BypassActivity;
+  try {
+    activity = await api.getBypassActivity();
+  } catch {
+    return;
+  }
+
+  const parts: string[] = [];
+  if (running) {
+    const since = activity.since;
+    const strategy = since?.strategy?.replace(/\.bat$/i, '');
+    parts.push(since ? `Работает${strategy ? ` на ${strategy}` : ''} с ${formatEventTime(since.at)}` : 'Работает');
+    parts.push(activity.healthLabel);
+  } else if (activity.health === 'down') {
+    parts.push('Обход остановился: рабочий конфиг не найден');
+  }
+  parts.push(`сеть: ${activity.network}`);
+  els.bypassActivityText.textContent = parts.join(' · ');
+  els.bypassHealthDot.className = `health-dot ${running || activity.health === 'down' ? HEALTH_DOT_CLASS[activity.health] ?? '' : ''}`;
+
+  els.bypassHistoryList.replaceChildren(
+    ...activity.events.map((event) => {
+      const item = document.createElement('li');
+      const time = document.createElement('time');
+      time.dateTime = new Date(event.at).toISOString();
+      time.textContent = formatEventTime(event.at);
+      const text = document.createElement('span');
+      text.textContent = event.text;
+      const tone = EVENT_TONE[event.kind];
+      if (tone) text.className = tone;
+      item.append(time, text);
+      return item;
+    })
+  );
+  els.bypassActivity.classList.toggle('hidden', !running && activity.events.length === 0 && activity.health !== 'down');
+}
+
 async function refreshStatus(full = true): Promise<void> {
   if (statusRefreshInFlight) {
     statusRefreshQueued = full || statusRefreshQueued;
@@ -1574,7 +1766,14 @@ async function refreshStatus(full = true): Promise<void> {
     els.minimizeToTrayToggle.checked = config.minimizeToTray !== false;
     els.autoUpdateZapretToggle.checked = config.autoUpdateZapret !== false;
     els.bypassAutoRecoverToggle.checked = config.bypassAutoRecover !== false;
+    els.bypassAutoSwitchToggle.checked = config.bypassAutoSwitch !== false;
+    els.bypassAutoSwitchToggle.disabled ||= !els.bypassAutoRecoverToggle.checked;
+    els.backgroundRerankToggle.checked = config.backgroundRerank !== false;
+    if (document.activeElement !== els.probeSitesInput) {
+      els.probeSitesInput.value = (config.probeSites ?? []).join(', ');
+    }
     showOfficialWarning(status);
+    void refreshBypassActivity(status.bypass.running);
     if (full) {
       void loadUserLists();
     }
@@ -1648,8 +1847,12 @@ function finishBootstrap(state: BootstrapState): void {
       void maybeStartAutoPick();
     }
   });
-  setBusy(false);
+  // Фоновое автообновление zapret тоже присылает bootstrap-complete — не снимаем busy,
+  // который держит чужая операция (диагностика, подбор), иначе можно запустить две сразу
+  if (busy && BOOTSTRAP_BUSY_LABELS.has(busyLabel)) setBusy(false);
 }
+
+const BOOTSTRAP_BUSY_LABELS = new Set(['Поиск zapret', 'Загрузка zapret']);
 
 function handleBootstrapState(state: BootstrapState): void {
   const downloading =
@@ -1657,7 +1860,7 @@ function handleBootstrapState(state: BootstrapState): void {
   showBootstrapBanner(state.message, downloading && state.stage !== 'ready');
   els.bootstrapBanner.classList.toggle('notice-loading', downloading);
   if (downloading) {
-    setBusy(true);
+    setBusy(true, 'Загрузка zapret');
     setDownloadingUi(true, state.message);
     const stage = state.stage === 'scanning' ? 'scan' : 'download';
     setGlobalLoad({
@@ -1673,8 +1876,11 @@ function handleBootstrapState(state: BootstrapState): void {
 }
 
 async function rescan(): Promise<void> {
-  if (busy) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  setBusy(true, 'Поиск zapret');
   log('Сканирование компьютера...', 'info');
   try {
     const state = await api.rescanZapret();
@@ -1688,8 +1894,11 @@ async function rescan(): Promise<void> {
 }
 
 async function downloadZapret(): Promise<void> {
-  if (busy) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  setBusy(true, 'Загрузка zapret');
   setDownloadingUi(true);
   setGlobalLoad({
     visible: true,
@@ -1714,6 +1923,7 @@ async function downloadZapret(): Promise<void> {
       message: formatUserError(err),
       stage: 'error',
     });
+    scheduleGlobalLoadHide(8000);
   } finally {
     setBusy(false);
   }
@@ -1737,7 +1947,7 @@ async function kickBootstrapIfMissing(): Promise<void> {
     /* continue if config unavailable */
   }
   bootstrapKickStarted = true;
-  setBusy(true);
+  setBusy(true, 'Поиск zapret');
   setDownloadingUi(true, 'Поиск или загрузка zapret...');
   setGlobalLoad({
     visible: true,
@@ -1760,8 +1970,11 @@ async function kickBootstrapIfMissing(): Promise<void> {
 }
 
 async function pickPath(): Promise<void> {
-  if (busy) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  setBusy(true, 'Выбор папки');
   log('Выбор папки zapret...', 'info');
   try {
     await api.setZapretPath();
@@ -1904,6 +2117,7 @@ els.linkCheckAppUpdate.addEventListener('click', (e) => {
     });
 });
 
+els.btnAppChangelog.addEventListener('click', () => void api.openAppReleasePage());
 els.linkAppRepo.addEventListener('click', (e) => {
   e.preventDefault();
   void api.openAppReleasePage();
@@ -1981,8 +2195,19 @@ els.btnDownload.addEventListener('click', () => void downloadZapret());
 els.btnDownloadInline.addEventListener('click', () => void downloadZapret());
 els.btnChangePath.addEventListener('click', () => void pickPath());
 els.btnChangePathEmpty.addEventListener('click', () => void pickPath());
-els.strategySelect.addEventListener('change', () => void runAction('Стратегия', () => api.setStrategy(els.strategySelect.value)));
-els.gameFilterSelect.addEventListener('change', () => void runAction('Фильтр', () => api.setGameFilter(els.gameFilterSelect.value)));
+// Пока идёт другая операция, выбор не применится — возвращаем прежнее значение, а не врём в списке
+els.strategySelect.addEventListener('change', async () => {
+  if (!(await runAction('Стратегия', () => api.setStrategy(els.strategySelect.value)))) {
+    els.strategySelect.value = currentStatus?.selectedStrategy ?? '';
+    strategyCustomSelect?.rebuild();
+  }
+});
+els.gameFilterSelect.addEventListener('change', async () => {
+  if (!(await runAction('Фильтр', () => api.setGameFilter(els.gameFilterSelect.value)))) {
+    els.gameFilterSelect.value = currentStatus?.settings.gameFilter ?? els.gameFilterSelect.value;
+    gameFilterCustomSelect?.rebuild();
+  }
+});
 els.userListKind.addEventListener('change', () => applyUserListEditor(currentUserListKind()));
 els.btnUserListSave.addEventListener('click', () => void saveUserListFromEditor());
 els.btnUserListAdd.addEventListener('click', () => void addUserListQuick());
@@ -1998,9 +2223,10 @@ els.ipsetModeSelect.addEventListener('change', () => {
     if (busy) {
       els.ipsetModeSelect.value = currentStatus?.settings.ipset ?? 'none';
       ipsetCustomSelect?.rebuild();
+      hintBusy();
       return;
     }
-    setBusy(true);
+    setBusy(true, 'Смена IPSet');
     try {
       const result = await api.setIpsetMode(mode);
       els.ipsetToggle.checked = result.ipset === 'loaded';
@@ -2017,36 +2243,76 @@ els.ipsetModeSelect.addEventListener('change', () => {
     }
   })();
 });
-els.checkUpdatesToggle.addEventListener('change', () => void runAction('Обновления', () => api.setCheckUpdates(els.checkUpdatesToggle.checked)));
-els.launchAtStartupToggle.addEventListener('change', () =>
-  void runAction('Автозапуск', () => api.setLaunchAtStartup(els.launchAtStartupToggle.checked))
-);
-els.autoStartBypassToggle.addEventListener('change', () =>
-  void runAction('Автозапуск обхода', async () => {
-    const result = await api.setAutoStartBypass(els.autoStartBypassToggle.checked);
-    if (result.launchAtStartup) {
-      els.launchAtStartupToggle.checked = true;
+/**
+ * Настройки приложения не трогают zapret — не захватываем общий busy (из-за него клики
+ * по другим кнопкам терялись) и не делаем полное обновление статуса. При ошибке
+ * возвращаем переключатель, чтобы он не показывал несохранённое значение.
+ */
+function bindSettingToggle(
+  input: HTMLInputElement,
+  label: string,
+  apply: (checked: boolean) => Promise<unknown>
+): void {
+  input.addEventListener('change', async () => {
+    const checked = input.checked;
+    input.disabled = true;
+    try {
+      await apply(checked);
+    } catch (err) {
+      input.checked = !checked;
+      reportFailure(err, label);
+    } finally {
+      input.disabled = false;
+      updateControls(currentStatus);
     }
-    return result;
-  })
+  });
+}
+
+els.checkUpdatesToggle.addEventListener('change', async () => {
+  if (!(await runAction('Обновления', () => api.setCheckUpdates(els.checkUpdatesToggle.checked)))) {
+    els.checkUpdatesToggle.checked = !els.checkUpdatesToggle.checked;
+  }
+});
+bindSettingToggle(els.launchAtStartupToggle, 'Автозапуск', (checked) => api.setLaunchAtStartup(checked));
+bindSettingToggle(els.autoStartBypassToggle, 'Автозапуск обхода', async (checked) => {
+  const result = await api.setAutoStartBypass(checked);
+  if (result.launchAtStartup) els.launchAtStartupToggle.checked = true;
+});
+bindSettingToggle(els.autoPickStrategyToggle, 'Автоподбор конфига', async (checked) => {
+  await api.setAutoPickBestStrategy(checked);
+  if (checked) void maybeStartAutoPick();
+});
+bindSettingToggle(els.autoUpdateZapretToggle, 'Автообновление zapret', (checked) => api.setAutoUpdateZapret(checked));
+bindSettingToggle(els.bypassAutoRecoverToggle, 'Автовосстановление обхода', (checked) =>
+  api.setBypassAutoRecover(checked)
 );
-els.autoPickStrategyToggle.addEventListener('change', () =>
-  void runAction('Автоподбор конфига', async () => {
-    await api.setAutoPickBestStrategy(els.autoPickStrategyToggle.checked);
-    if (els.autoPickStrategyToggle.checked) {
-      await maybeStartAutoPick();
-    }
-  })
+bindSettingToggle(els.bypassAutoSwitchToggle, 'Переключение конфига при сбое', (checked) =>
+  api.setBypassAutoSwitch(checked)
 );
-els.autoUpdateZapretToggle.addEventListener('change', () =>
-  void runAction('Автообновление zapret', () => api.setAutoUpdateZapret(els.autoUpdateZapretToggle.checked))
+bindSettingToggle(els.backgroundRerankToggle, 'Перепроверка в простое', (checked) =>
+  api.setBackgroundRerank(checked)
 );
-els.bypassAutoRecoverToggle.addEventListener('change', () =>
-  void runAction('Автовосстановление обхода', () => api.setBypassAutoRecover(els.bypassAutoRecoverToggle.checked))
-);
-els.minimizeToTrayToggle.addEventListener('change', () =>
-  void runAction('Сворачивание в трей', () => api.setMinimizeToTray(els.minimizeToTrayToggle.checked))
-);
+els.probeSitesInput.addEventListener('change', async () => {
+  const sites = els.probeSitesInput.value.split(/[,\s]+/).filter(Boolean);
+  try {
+    const result = await api.setProbeSites(sites);
+    els.probeSitesInput.value = result.probeSites.join(', ');
+    if (result.rejected.length > 0) toast(`Не похоже на адрес: ${result.rejected.join(', ')}`, 'info');
+    else toast(result.probeSites.length > 0 ? 'Сайты для проверки сохранены' : 'Проверка по YouTube и Discord', 'success');
+  } catch (err) {
+    reportFailure(err);
+  }
+});
+els.btnSaveReport.addEventListener('click', async () => {
+  try {
+    const result = await api.saveDiagnosticReport();
+    if (result.saved) toast('Отчёт сохранён', 'success');
+  } catch (err) {
+    reportFailure(err);
+  }
+});
+api.onBypassActivityChanged(() => void refreshBypassActivity());
+bindSettingToggle(els.minimizeToTrayToggle, 'Сворачивание в трей', (checked) => api.setMinimizeToTray(checked));
 els.btnDiagnostics.addEventListener('click', () => void runTool('Диагностика', () => api.runDiagnostics()));
 els.btnFindBest.addEventListener('click', () => void runPickBestStrategy({ quick: true }));
 els.btnFullCheck.addEventListener('click', () => void runPickBestStrategy({ quick: false }));
@@ -2066,8 +2332,11 @@ els.testResults.addEventListener('click', (event) => {
 els.btnProcessStatus.addEventListener('click', () => void runTool('Статус обхода', () => api.getProcessStatus()));
 els.btnCheckUpdates.addEventListener('click', () => {
   void (async () => {
-    if (busy) return;
-    setBusy(true);
+    if (busy) {
+    hintBusy();
+    return;
+  }
+    setBusy(true, 'Проверка версии');
     try {
       const [zapretUpdate, appUpdate] = await Promise.all([api.checkUpdates(), api.checkAppUpdate()]);
       const zapretMessage = zapretUpdate.upToDate
@@ -2120,15 +2389,14 @@ els.btnRestartAdmin?.addEventListener('click', () => {
 
 // ── App tabs ────────────────────────────────────────────────────────────────
 
-type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'auto' | 'tools';
+type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'tools';
 
 const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
   home: ['Главная', 'Zapret, Telegram proxy и VPN в одном окне'],
   bypass: ['Обход', 'Запуск zapret и выбор конфига'],
   telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
   vpn: ['VPN', 'AmneziaWG прямо из Skvoz'],
-  settings: ['Фильтры', 'Игровой фильтр, IPSet и свои списки'],
-  auto: ['Авто', 'Автозапуск, восстановление и обновления'],
+  settings: ['Настройки', 'Запуск, автоматика обхода, фильтры и обновления'],
   tools: ['Сервис', 'Инструменты, журнал и о программе'],
 };
 
@@ -2164,15 +2432,81 @@ function setActiveAppView(view: AppView): void {
   els.pageTitle.textContent = title;
   els.pageSubtitle.textContent = subtitle;
   moveNavIndicator();
+  if (view === 'settings') restoreSettingsTab();
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
 document.querySelectorAll<HTMLButtonElement>('.side-nav-btn, [data-goto]').forEach((button) => {
-  button.addEventListener('click', () =>
-    setActiveAppView(((button.dataset.view ?? button.dataset.goto) as AppView) ?? 'home')
-  );
+  button.addEventListener('click', () => {
+    setActiveAppView(((button.dataset.view ?? button.dataset.goto) as AppView) ?? 'home');
+    // ссылка может вести сразу на нужную вкладку настроек
+    if (button.dataset.settingsTab) selectSettingsTab(button.dataset.settingsTab);
+  });
 });
+// ── Вкладки настроек: на экране только выбранный раздел ─────────────────────
+
+const SETTINGS_TAB_KEY = 'zapret-app-settings-tab';
+
+function settingsTabButtons(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>('.settings-tabs [data-tab]'));
+}
+
+/** Фильтры и списки без zapret скрыты — тогда открываем первую доступную вкладку */
+function isSettingsTabAvailable(button: HTMLButtonElement): boolean {
+  return !(button.classList.contains('needs-zapret') && document.body.classList.contains('zapret-missing'));
+}
+
+function selectSettingsTab(tab?: string | null, focus = false): void {
+  const buttons = settingsTabButtons();
+  const target =
+    buttons.find((button) => button.dataset.tab === tab && isSettingsTabAvailable(button)) ??
+    buttons.find(isSettingsTabAvailable);
+  if (!target) return;
+  for (const button of buttons) {
+    const active = button === target;
+    button.classList.toggle('is-current', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    document.getElementById(button.dataset.tab ?? '')?.classList.toggle('is-tab-active', active);
+  }
+  if (focus) target.focus();
+  try {
+    localStorage.setItem(SETTINGS_TAB_KEY, target.dataset.tab ?? '');
+  } catch {
+    /* ignore */
+  }
+}
+
+function restoreSettingsTab(): void {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(SETTINGS_TAB_KEY);
+  } catch {
+    /* ignore */
+  }
+  selectSettingsTab(saved);
+}
+
+for (const button of settingsTabButtons()) {
+  button.addEventListener('click', () => {
+    selectSettingsTab(button.dataset.tab);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  });
+  // стрелки переключают вкладки, как в обычном tablist
+  button.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    event.preventDefault();
+    const available = settingsTabButtons().filter(isSettingsTabAvailable);
+    const index = available.indexOf(button);
+    const next = available[(index + (event.key === 'ArrowRight' ? 1 : -1) + available.length) % available.length];
+    selectSettingsTab(next?.dataset.tab, true);
+  });
+}
+restoreSettingsTab();
+
 els.btnQuickBypass.addEventListener('click', () => els.btnToggle.click());
+els.btnBypassDeckToggle.addEventListener('click', () => els.btnToggle.click());
+els.btnVpnDeckToggle.addEventListener('click', () => els.btnQuickVpn.click());
 els.btnQuickTg.addEventListener('click', () => els.btnTgToggle.click());
 els.btnQuickVpn.addEventListener('click', () => {
   // Без конфига — сразу создаём WARP с автоподбором: один клик от Главной до работающего VPN
@@ -2188,8 +2522,14 @@ els.btnQuickVpn.addEventListener('click', () => {
   } catch {
     /* ignore */
   }
+  if (saved === 'auto') saved = 'settings';
   setActiveAppView(saved && Object.prototype.hasOwnProperty.call(APP_VIEW_TITLES, saved) ? (saved as AppView) : 'home');
 }
+
+// меню трея открывает окно сразу на нужной странице
+api?.onNavigate((view) => {
+  if (Object.prototype.hasOwnProperty.call(APP_VIEW_TITLES, view)) setActiveAppView(view as AppView);
+});
 
 function flashButton(button: HTMLButtonElement, text: string): void {
   const original = button.dataset.label ?? button.textContent ?? '';
@@ -2214,8 +2554,8 @@ document.addEventListener('keydown', (event) => {
   toast('Статус обновлён', 'info');
 });
 
-// Ctrl+1…7 — страницы
-const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'vpn', 'settings', 'auto', 'tools'];
+// Ctrl+1…6 — страницы
+const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'vpn', 'settings', 'tools'];
 document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
   const index = Number(event.key) - 1;
@@ -2283,13 +2623,13 @@ async function loadTgwsState(): Promise<void> {
     // Deck title / meta / dot
     els.tgDeckTitle.textContent = tgwsRunning
       ? `Работает на ${tgwsConfig.host}:${tgwsConfig.port}`
-      : 'Telegram proxy остановлен';
+      : 'Telegram-прокси остановлен';
     els.tgDeckMeta.textContent = tgwsRunning
       ? 'Подключение MTProto→WebSocket через локальный прокси'
-      : 'Включается на Главной или из трея';
+      : 'Нажмите «Запустить», потом «Открыть в Telegram»';
     els.tgStatusDot.classList.toggle('is-live', tgwsRunning);
     els.statusTg.classList.toggle('running', tgwsRunning);
-    els.statusTg.title = tgwsRunning ? 'Telegram proxy работает' : 'Telegram proxy выключен';
+    els.statusTg.title = tgwsRunning ? 'Telegram-прокси работает' : 'Telegram-прокси выключен';
 
     // Stats
     els.tgStatTotal.textContent = String(tgwsStats.total);
@@ -2314,6 +2654,7 @@ async function loadTgwsState(): Promise<void> {
         : '';
     els.btnQuickTg.textContent = tgwsRunning ? 'Остановить' : 'Включить';
     els.btnQuickTg.disabled = busy;
+    els.btnTgToggle.disabled = busy;
 
     // Proxy link
     const link = await api.tgwsProxyLink();
@@ -2348,8 +2689,11 @@ function stopTgwsPoll(): void {
 }
 
 els.btnTgToggle.addEventListener('click', async () => {
-  if (busy) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  setBusy(true, 'Telegram proxy');
   try {
     if (tgwsRunning) {
       await api.tgwsStop();
@@ -2367,8 +2711,12 @@ els.btnTgToggle.addEventListener('click', async () => {
 });
 
 els.btnTgDisconnect.addEventListener('click', async () => {
-  if (busy || !tgwsRunning) return;
-  setBusy(true);
+  if (busy) {
+    hintBusy();
+    return;
+  }
+  if (!tgwsRunning) return;
+  setBusy(true, 'Telegram proxy');
   try {
     await api.tgwsStop();
     toast('Прокси остановлен', 'info');
@@ -2436,7 +2784,10 @@ els.btnTgGenSecret.addEventListener('click', () => {
 });
 
 els.btnTgSaveConfig.addEventListener('click', async () => {
-  if (busy) return;
+  if (busy) {
+    hintBusy();
+    return;
+  }
   const portVal = Number(els.tgPort.value);
   if (!Number.isInteger(portVal) || portVal < 1 || portVal > 65535) {
     toast('Неверный порт (1–65535)', 'error');
@@ -2447,7 +2798,7 @@ els.btnTgSaveConfig.addEventListener('click', async () => {
     toast('Секрет должен быть 32 hex-символа', 'error');
     return;
   }
-  setBusy(true);
+  setBusy(true, 'Сохранение прокси');
   try {
     const updates: Partial<TgwsProxyConfig> = {
       port: portVal,
@@ -2507,7 +2858,7 @@ function renderVpnState(state: VpnState): void {
         ? 'Весь трафик идёт через VPN'
         : 'Через VPN идут адреса из AllowedIPs'
     : configured
-      ? 'Включается на Главной или из трея'
+      ? 'Нажмите «Включить» — трафик пойдёт через VPN'
       : state.bundled
         ? 'Нажмите «Создать и подключить» — конфиг появится сам'
         : 'В этой сборке нет файлов AmneziaWG — переустановите Skvoz';
@@ -2553,6 +2904,10 @@ function renderVpnState(state: VpnState): void {
       : '';
   els.btnQuickVpn.textContent = running ? 'Остановить' : configured ? 'Включить' : 'Создать VPN';
   els.btnQuickVpn.disabled = strategyPickActive || vpnBusy;
+  els.btnVpnDeckToggle.textContent = running ? 'Отключить' : configured ? 'Включить' : 'Создать VPN';
+  els.btnVpnDeckToggle.disabled = els.btnQuickVpn.disabled;
+  els.btnVpnDeckToggle.classList.toggle('btn-glow', !running);
+  els.btnVpnDeckToggle.classList.toggle('btn-soft', running);
 }
 
 async function loadVpnState(): Promise<void> {

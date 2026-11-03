@@ -7,6 +7,8 @@ export interface LoadProgressInput {
   title?: string;
   stage?: LoadStage;
   indeterminate?: boolean;
+  /** false — показать прогресс, не запрещая клики (фоновые загрузки) */
+  blocking?: boolean;
 }
 
 export interface InlineProgressInput {
@@ -176,12 +178,15 @@ export function setGlobalLoad(input: LoadProgressInput): void {
     return;
   }
 
+  const stage = input.stage ?? 'generic';
   globalVisible = true;
-  document.body.classList.add('global-load-active');
+  // Ошибка и «готово» — уже не процесс: блокировать интерфейс под ними нельзя,
+  // иначе после неудачной загрузки ничего не нажимается
+  const blocking = input.blocking !== false && stage !== 'error' && stage !== 'done';
+  document.body.classList.toggle('global-load-active', blocking);
   els.progressWrap.classList.remove('hidden', 'is-hiding', 'is-done', 'is-error');
   requestAnimationFrame(() => els.progressWrap.classList.add('is-open'));
 
-  const stage = input.stage ?? 'generic';
   const rawIndeterminate = !!input.indeterminate || input.stage === 'scan';
   const rawPct = clampPercent(input.percent, rawIndeterminate);
   const display = resolveDownloadDisplay(stage, rawPct, rawIndeterminate);

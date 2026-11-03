@@ -24,6 +24,16 @@ contextBridge.exposeInMainWorld('zapretApi', {
   setMinimizeToTray: (enabled: boolean) => ipcRenderer.invoke('set-minimize-to-tray', enabled),
   setAutoUpdateZapret: (enabled: boolean) => ipcRenderer.invoke('set-auto-update-zapret', enabled),
   setBypassAutoRecover: (enabled: boolean) => ipcRenderer.invoke('set-bypass-auto-recover', enabled),
+  setBypassAutoSwitch: (enabled: boolean) => ipcRenderer.invoke('set-bypass-auto-switch', enabled),
+  setBackgroundRerank: (enabled: boolean) => ipcRenderer.invoke('set-background-rerank', enabled),
+  setProbeSites: (sites: string[]) => ipcRenderer.invoke('set-probe-sites', sites),
+  getBypassActivity: () => ipcRenderer.invoke('get-bypass-activity'),
+  saveDiagnosticReport: () => ipcRenderer.invoke('save-diagnostic-report'),
+  onBypassActivityChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('bypass-activity-changed', listener);
+    return () => ipcRenderer.removeListener('bypass-activity-changed', listener);
+  },
   getBootstrapState: () => ipcRenderer.invoke('get-bootstrap-state'),
   rescanZapret: () => ipcRenderer.invoke('rescan-zapret'),
   scanInstallations: () => ipcRenderer.invoke('scan-installations'),
@@ -97,7 +107,12 @@ contextBridge.exposeInMainWorld('zapretApi', {
   vpnSetAutostart: (enabled: boolean) => ipcRenderer.invoke('vpn-set-autostart', enabled),
 
   checkAccess: () => ipcRenderer.invoke('check-access'),
-  showMainWindow: () => ipcRenderer.invoke('show-main-window'),
+  showMainWindow: (view?: string) => ipcRenderer.invoke('show-main-window', view),
+  onNavigate: (callback: (view: string) => void) => {
+    const listener = (_event: IpcRendererEvent, view: string) => callback(view);
+    ipcRenderer.on('navigate', listener);
+    return () => ipcRenderer.removeListener('navigate', listener);
+  },
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
   restartAsAdmin: () => ipcRenderer.invoke('restart-as-admin'),
