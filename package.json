@@ -15,11 +15,12 @@
     "icons": "node scripts/generate-icon.js",
     "logo": "electron scripts/render-logo.js",
     "start": "scripts\\start-win.cmd",
-    "dev": "tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/run-dev.js",
+    "dev": "npm run vendor && tsc && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js && node scripts/run-dev.js",
     "dev:admin": "scripts\\start-win.cmd",
-    "pack": "npm run build && npm run icons && electron-builder --win --x64",
-    "pack:portable": "npm run build && npm run icons && electron-builder --win portable --x64",
-    "pack:setup": "npm run build && npm run icons && electron-builder --win nsis --x64"
+    "pack": "npm run vendor && npm run build && npm run icons && electron-builder --win --x64",
+    "pack:portable": "npm run vendor && npm run build && npm run icons && electron-builder --win portable --x64",
+    "pack:setup": "npm run vendor && npm run build && npm run icons && electron-builder --win nsis --x64",
+    "vendor": "node scripts/fetch-vendor.js"
   },
   "build": {
     "appId": "com.protheticglitch.zapret-app",
@@ -34,6 +35,30 @@
       "dist/**/*",
       "assets/icon.png",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/amneziawg",
+        "to": "amneziawg",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/wgcf",
+        "to": "wgcf",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "asar": true,
     "win": {

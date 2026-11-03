@@ -77,6 +77,25 @@ contextBridge.exposeInMainWorld('zapretApi', {
   tgwsStop: () => ipcRenderer.invoke('tgws-stop'),
   tgwsStatus: () => ipcRenderer.invoke('tgws-status'),
   tgwsProxyLink: () => ipcRenderer.invoke('tgws-proxy-link'),
+
+  // ── AmneziaWG VPN ──────────────────────────────────────────────────────
+  vpnStatus: () => ipcRenderer.invoke('vpn-status'),
+  vpnImportFile: () => ipcRenderer.invoke('vpn-import-file'),
+  vpnImportText: (text: string) => ipcRenderer.invoke('vpn-import-text', text),
+  vpnRemoveConfig: () => ipcRenderer.invoke('vpn-remove-config'),
+  vpnWarpEndpoints: () => ipcRenderer.invoke('vpn-warp-endpoints'),
+  vpnGenerateWarp: (options: { endpoint: string; preset: string }) =>
+    ipcRenderer.invoke('vpn-generate-warp', options),
+  vpnExportConfig: () => ipcRenderer.invoke('vpn-export-config'),
+  onVpnProgress: (callback: (payload: { text: string }) => void) => {
+    const listener = (_event: IpcRendererEvent, payload: { text: string }) => callback(payload);
+    ipcRenderer.on('vpn-progress', listener);
+    return () => ipcRenderer.removeListener('vpn-progress', listener);
+  },
+  vpnConnect: () => ipcRenderer.invoke('vpn-connect'),
+  vpnDisconnect: () => ipcRenderer.invoke('vpn-disconnect'),
+  vpnSetAutostart: (enabled: boolean) => ipcRenderer.invoke('vpn-set-autostart', enabled),
+
   checkAccess: () => ipcRenderer.invoke('check-access'),
   showMainWindow: () => ipcRenderer.invoke('show-main-window'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),

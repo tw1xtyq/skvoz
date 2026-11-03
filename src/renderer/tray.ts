@@ -14,6 +14,9 @@ interface TrayApi {
   }>;
   tgwsStart(): Promise<unknown>;
   tgwsStop(): Promise<unknown>;
+  vpnStatus(): Promise<{ running: boolean; configured: boolean; summary: { endpoint: string } | null }>;
+  vpnConnect(): Promise<unknown>;
+  vpnDisconnect(): Promise<unknown>;
   checkAccess(): Promise<Array<{ id: string; status: 'ok' | 'partial' | 'fail'; detail: string }>>;
   showMainWindow(): Promise<unknown>;
   onTrayReveal(callback: () => void): () => void;
@@ -28,6 +31,9 @@ const bypassToggle = $<HTMLInputElement>('tpBypassToggle');
 const tgRow = $('tpTg');
 const tgText = $('tpTgText');
 const tgToggle = $<HTMLInputElement>('tpTgToggle');
+const vpnRow = $('tpVpn');
+const vpnText = $('tpVpnText');
+const vpnToggle = $<HTMLInputElement>('tpVpnToggle');
 const summary = $('tpSummary');
 const errorEl = $('tpError');
 const checkBtn = $<HTMLButtonElement>('tpCheck');
@@ -44,7 +50,11 @@ function showError(err: unknown): void {
 async function refresh(): Promise<void> {
   if (busy) return;
   try {
-    const [{ config, status }, tg] = await Promise.all([trayApi.getDashboardState({ light: true }), trayApi.tgwsStatus()]);
+    const [{ config, status }, tg, vpn] = await Promise.all([
+      trayApi.getDashboardState({ light: true }),
+      trayApi.tgwsStatus(),
+      trayApi.vpnStatus(),
+    ]);
     const running = status.bypass.running;
     const strategy = (config.selectedStrategy ?? status.selectedStrategy ?? '').replace(/\.bat$/i, '');
     bypassRow.classList.toggle('is-live', running);
@@ -60,8 +70,18 @@ async function refresh(): Promise<void> {
       ? `${tg.config.host}:${tg.config.port} · ${tg.stats.active} подкл.`
       : 'Выключен';
 
+    vpnRow.classList.toggle('is-live', vpn.running);
+    vpnToggle.checked = vpn.running;
+    vpnToggle.disabled = !vpn.configured && !vpn.running;
+    vpnText.textContent = vpn.running
+      ? `Включён · ${vpn.summary?.endpoint ?? ''}`
+      : vpn.configured
+        ? 'Выключен'
+        : 'Нет конфига';
+
+    // VPN не обязателен: «всё работает» — когда включены обход и прокси
     const live = Number(running) + Number(tg.running);
-    summary.textContent = live === 2 ? 'всё работает' : live === 1 ? 'работает частично' : 'выключено';
+    summary.textContent = live === 2 ? 'всё работает' : live === 1 ? 'работает частично' : vpn.running ? 'только VPN' : 'выключено';
     summary.dataset.state = String(live);
   } catch (err) {
     showError(err);
@@ -74,6 +94,7 @@ async function act(fn: () => Promise<unknown>): Promise<void> {
   errorEl.classList.add('hidden');
   bypassToggle.disabled = true;
   tgToggle.disabled = true;
+  vpnToggle.disabled = true;
   try {
     await fn();
   } catch (err) {
@@ -89,6 +110,9 @@ bypassToggle.addEventListener('change', () =>
   void act(() => (bypassToggle.checked ? trayApi.startBypass() : trayApi.stopBypass()))
 );
 tgToggle.addEventListener('change', () => void act(() => (tgToggle.checked ? trayApi.tgwsStart() : trayApi.tgwsStop())));
+vpnToggle.addEventListener('change', () =>
+  void act(() => (vpnToggle.checked ? trayApi.vpnConnect() : trayApi.vpnDisconnect()))
+);
 $('tpOpen').addEventListener('click', () => void trayApi.showMainWindow());
 
 checkBtn.addEventListener('click', () => {

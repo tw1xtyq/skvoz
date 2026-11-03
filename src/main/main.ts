@@ -66,6 +66,8 @@ import {
   stopBypassWatchdog,
 } from './bypass-watchdog';
 import { tgwsProxy, type TgwsProxyConfig } from './tgws-proxy';
+import { amneziaVpn } from './amneziawg';
+import { createWarpVpn, WARP_ENDPOINTS, type WarpGenerateOptions } from './warp-generator';
 import { checkAccess } from './access-check';
 
 const APP_DISPLAY_NAME = 'Skvoz';
@@ -214,6 +216,59 @@ function initTgwsProxy(): void {
       notify('Telegram proxy не запустился', message);
     });
   }
+}
+
+function initVpn(): void {
+  amneziaVpn.onLog((level, message) => sendToolOutput(message, level));
+  amneziaVpn.onStateChange(() => void refreshTrayMenu());
+  const settings = amneziaVpn.getSettings();
+  // После обновления поднимаем VPN, если он работал до перезапуска
+  const resumeAfterUpdate = process.argv.includes(UPDATED_LAUNCH_ARG) && settings.enabled;
+  if (settings.enabled) amneziaVpn.setSettings({ enabled: false });
+  void amneziaVpn.queryService().then((state) => {
+    if (state === 'RUNNING' || !amneziaVpn.isConfigured()) return;
+    if (!settings.autostart && !resumeAfterUpdate) return;
+    amneziaVpn.connectWithRetry().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      sendToolOutput(`[VPN] Автозапуск не удался: ${message}`, 'error');
+      notify('VPN не подключился', message);
+    });
+  });
+}
+
+const WARP_API_DOMAIN = 'cloudflareclient.com';
+
+/**
+ * РКН блокирует регистрацию WARP, а обход zapret её пропускает. Если обход выключен —
+ * включаем его на время регистрации и возвращаем функцию, которая выключит его обратно.
+ * Флаги сторожа не трогаем: для него это не запуск пользователем.
+ */
+async function openWarpRoute(): Promise<(() => Promise<void>) | null> {
+  const root = await tryResolveZapretPath({ allowScan: false });
+  if (!root) return null;
+  // Кэш статуса может отставать — иначе запустим второй winws поверх работающего
+  invalidateStatusCache();
+  const status = await getStatus(root);
+  const strategy = config.selectedStrategy ?? status.selectedStrategy;
+  if (status.bypass.running || !strategy || !status.strategies.includes(strategy)) return null;
+
+  // В list-general.txt от Flowseal домен уже есть; на случай другой сборки добавляем в свой список
+  const generalList = path.join(root, 'lists', 'list-general.txt');
+  const listed = fs.existsSync(generalList)
+    && fs.readFileSync(generalList, 'utf8').split(/\r?\n/).some((line) => line.trim().replace(/^\^/, '') === WARP_API_DOMAIN);
+  if (!listed) addUserListEntries(root, 'general', [WARP_API_DOMAIN]);
+
+  const log = (line: { text: string; level: string }): void => sendToolOutput(line.text, line.level);
+  await startBypass(root, strategy, log);
+  await delay(1500);
+  invalidateStatusCache();
+  if (!(await verifyBypassRunning()).running) return null;
+  void refreshTrayMenu(true);
+  return async () => {
+    await stopBypass(log);
+    invalidateStatusCache();
+    await refreshTrayMenu(true);
+  };
 }
 
 function initBypassWatchdog(): void {
@@ -599,7 +654,7 @@ function scheduleTraySync(): void {
 
 // ── Мини-окно у трея ──────────────────────────────────────────────────
 
-const TRAY_WINDOW_SIZE = { width: 330, height: 318 };
+const TRAY_WINDOW_SIZE = { width: 330, height: 386 };
 let trayWindow: BrowserWindow | null = null;
 let trayWindowHiddenAt = 0;
 
@@ -697,7 +752,8 @@ function createTray(): void {
 function trayTooltip(): string {
   const zapret = trayMenuState.running ? 'обход включён' : 'обход выключен';
   const tg = tgwsProxy.isRunning() ? 'TG proxy работает' : 'TG proxy выключен';
-  return `Skvoz — ${zapret}, ${tg}`;
+  const vpn = amneziaVpn.isRunning() ? 'VPN включён' : 'VPN выключен';
+  return `Skvoz — ${zapret}, ${tg}, ${vpn}`;
 }
 
 async function refreshTrayMenu(force = false): Promise<void> {
@@ -740,6 +796,8 @@ function buildTrayMenu(): Menu {
   const { running, canStart, strategy } = trayMenuState;
   const tgRunning = tgwsProxy.isRunning();
   const tg = tgwsProxy.getConfig();
+  const vpnRunning = amneziaVpn.isRunning();
+  const vpnSummary = amneziaVpn.getSummary();
   const strategyLabel = strategy ? strategy.replace(/\.bat$/i, '') : 'конфиг не выбран';
 
   return Menu.buildFromTemplate([
@@ -764,6 +822,13 @@ function buildTrayMenu(): Menu {
       },
     },
     { type: 'separator' },
+    { label: `VPN: ${vpnRunning ? `включён · ${vpnSummary?.endpoint ?? ''}` : 'выключен'}`, enabled: false },
+    {
+      label: vpnRunning ? 'Выключить VPN' : 'Включить VPN',
+      enabled: vpnRunning || amneziaVpn.isConfigured(),
+      click: () => void traySetVpn(!vpnRunning),
+    },
+    { type: 'separator' },
     {
       label: 'Выход',
       click: () => quitApp(),
@@ -779,6 +844,18 @@ async function traySetTgws(enable: boolean): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     sendToolOutput(`[TG] ${message}`, 'error');
     notify('Telegram proxy не запустился', message);
+  }
+  void refreshTrayMenu();
+}
+
+async function traySetVpn(enable: boolean): Promise<void> {
+  try {
+    if (enable) await amneziaVpn.connect();
+    else await amneziaVpn.disconnect();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`[VPN] ${message}`, 'error');
+    notify('VPN не подключился', message);
   }
   void refreshTrayMenu();
 }
@@ -1660,6 +1737,7 @@ function registerIpc(): void {
     pendingAppUpdate = null;
     // Запоминаем, работал ли прокси, чтобы поднять его после перезапуска
     await tgwsProxy.setConfig({ enabled: tgwsProxy.isRunning() }).catch(() => undefined);
+    amneziaVpn.setSettings({ enabled: amneziaVpn.isRunning() });
     scheduleAppUpdateApply(update);
     setTimeout(() => quitApp(), 600);
     return { ok: true, version: update.version };
@@ -1779,6 +1857,74 @@ function registerIpc(): void {
 
   ipcMain.handle('tgws-proxy-link', () => tgwsProxy.buildProxyLink());
 
+  // ── AmneziaWG VPN ─────────────────────────────────────────────────────
+
+  ipcMain.handle('vpn-status', () => amneziaVpn.getState());
+
+  ipcMain.handle('vpn-import-file', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Выберите конфиг AmneziaWG',
+      properties: ['openFile'],
+      filters: [{ name: 'Конфиг AmneziaWG / WireGuard', extensions: ['conf'] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true as const };
+    if (fs.statSync(result.filePaths[0]).size > 64 * 1024) throw new Error('Файл слишком большой для конфига');
+    const summary = await amneziaVpn.importConfig(fs.readFileSync(result.filePaths[0], 'utf8'));
+    return { canceled: false as const, summary };
+  });
+
+  ipcMain.handle('vpn-import-text', async (_e, text: string) => {
+    if (typeof text !== 'string' || text.length > 64 * 1024) throw new Error('Неверный конфиг');
+    return { summary: await amneziaVpn.importConfig(text) };
+  });
+
+  ipcMain.handle('vpn-warp-endpoints', () => WARP_ENDPOINTS);
+
+  ipcMain.handle('vpn-generate-warp', async (_e, options: WarpGenerateOptions) => {
+    const result = await createWarpVpn(
+      { endpoint: String(options?.endpoint ?? 'auto'), preset: options?.preset ?? 'auto' },
+      (text) => {
+        sendToolOutput(`[VPN] ${text}`, 'info');
+        mainWindow?.webContents.send('vpn-progress', { text });
+      },
+      openWarpRoute
+    );
+    sendToolOutput(`[VPN] Подключено через ${result.candidate.endpoint}`, 'success');
+    return result;
+  });
+
+  ipcMain.handle('vpn-export-config', async () => {
+    const text = amneziaVpn.readConfigText();
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Сохранить конфиг VPN',
+      defaultPath: 'Skvoz-VPN.conf',
+      filters: [{ name: 'Конфиг AmneziaWG', extensions: ['conf'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true as const };
+    fs.writeFileSync(result.filePath, text, 'utf8');
+    return { canceled: false as const, filePath: result.filePath };
+  });
+
+  ipcMain.handle('vpn-remove-config', async () => {
+    await amneziaVpn.removeConfig();
+    return { ok: true };
+  });
+
+  ipcMain.handle('vpn-connect', async () => {
+    await amneziaVpn.connect();
+    return { ok: true };
+  });
+
+  ipcMain.handle('vpn-disconnect', async () => {
+    await amneziaVpn.disconnect();
+    return { ok: true };
+  });
+
+  ipcMain.handle('vpn-set-autostart', (_e, enabled: boolean) => {
+    amneziaVpn.setSettings({ autostart: !!enabled });
+    return { autostart: amneziaVpn.getSettings().autostart };
+  });
+
   ipcMain.handle('open-external', async (_e, url: string) => {
     // Только веб-ссылки и ссылки Telegram — никаких file:// и запуска программ
     if (!/^(https:\/\/|tg:\/\/)/i.test(String(url))) throw new Error('Недопустимая ссылка');
@@ -1845,11 +1991,14 @@ if (!gotSingleInstanceLock) {
     void syncLaunchAtStartup(config.launchAtStartup);
     initBypassWatchdog();
     initTgwsProxy();
+    initVpn();
     scheduleZapretAutoUpdate();
 
     app.on('before-quit', () => {
       stopBypassWatchdog();
       void tgwsProxy.stop();
+      // Без окна Skvoz VPN нечем выключить — гасим его вместе с приложением
+      amneziaVpn.stopOnQuit();
     });
 
     app.on('activate', () => {

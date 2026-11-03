@@ -10,6 +10,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 exit /b
 
 :run
+call npm run vendor
+if errorlevel 1 exit /b 1
 call npm run build
 if errorlevel 1 exit /b 1
 call node scripts\run-dev.js

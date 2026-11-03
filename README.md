@@ -1,6 +1,6 @@
 # Skvoz
 
-Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) и локального Telegram-прокси на Windows. Скачивает и обновляет zapret, подбирает рабочий конфиг, включает обход и проверяет, открываются ли Discord, YouTube и Telegram.
+Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube), локального Telegram-прокси и VPN на AmneziaWG для Windows. Скачивает и обновляет zapret, подбирает рабочий конфиг, включает обход, одной кнопкой создаёт бесплатный VPN и проверяет, открываются ли Discord, YouTube и Telegram.
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-blue) ![Release](https://img.shields.io/github/v/release/tw1xtyq/skvoz) ![Downloads](https://img.shields.io/github/downloads/tw1xtyq/skvoz/total) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -20,17 +20,17 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 1. Запустите Setup или Portable и подтвердите запрос **UAC** — без прав администратора обход не работает.
 2. Если zapret ещё не установлен, нажмите **«Скачать с GitHub»** — или укажите папку, если он уже есть.
 3. На странице **Обход** выберите конфиг или нажмите **«Подобрать»** — приложение само найдёт рабочий.
-4. На **Главной** включите **Zapret** и при необходимости **TG WS Proxy**.
+4. На **Главной** включите **Zapret** и при необходимости **TG WS Proxy** или **VPN**.
 
-Включать и выключать обход и прокси можно только на Главной и в мини-окне у трея — так их не перепутать.
+Включать и выключать обход, прокси и VPN можно на Главной и в мини-окне у трея.
 
 Настройки хранятся в `%APPDATA%\zapret-app\` и общие для Setup и Portable.
 
 ## Главная и трей
 
-- **Zapret** и **TG WS Proxy** — включение одной кнопкой, статус и текущий конфиг.
+- **Zapret**, **TG WS Proxy** и **VPN** — включение одной кнопкой, статус и текущий конфиг. Если VPN ещё не настроен, кнопка **«Создать VPN»** сразу создаёт и подключает его.
 - **Проверка доступа** — проверяет Discord, YouTube и Telegram; Telegram через прокси проверяется настоящим MTProto-запросом. После включения обхода запускается сама.
-- **Мини-окно у трея** — клик по значку: переключатели обхода и прокси и проверка доступа, не открывая основное окно.
+- **Мини-окно у трея** — клик по значку: переключатели обхода, прокси и VPN и проверка доступа, не открывая основное окно.
 
 ## Telegram proxy
 
@@ -40,6 +40,43 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 2. На странице **Telegram** нажмите **«Открыть в Telegram»** или скопируйте ссылку прокси в клиент.
 
 Там же меняются адрес, порт и секрет. **Автозапуск прокси** — во вкладке **Авто**.
+
+## VPN (AmneziaWG)
+
+Skvoz подключает VPN по конфигу AmneziaWG или WireGuard. Ставить AmneziaWG отдельно не нужно: всё необходимое уже есть внутри Skvoz.
+
+### Бесплатный VPN одной кнопкой
+
+На **Главной** нажмите **«Создать VPN»** или на странице **VPN** — **«Создать и подключить»**. Skvoz:
+
+1. берёт актуальные параметры маскировки из [bash-warp-generator](https://github.com/ImMALWARE/bash-warp-generator);
+2. регистрирует бесплатный аккаунт Cloudflare WARP;
+3. перебирает серверы и режимы маскировки, пока сервер не ответит, и оставляет первый рабочий.
+
+Обычно это 10–30 секунд. Ход подбора виден в статусе VPN.
+
+**Почему генератор не устаревает:**
+- параметры маскировки и адрес API Skvoz сверяет с bash-warp-generator раз в 12 часов. Из скрипта берутся только значения, каждое проверяется, код не выполняется;
+- если Cloudflare не даёт зарегистрироваться напрямую, Skvoz использует [wgcf](https://github.com/ViRb3/wgcf) и сам обновляет его с GitHub, сверяя SHA-256;
+- без интернета до GitHub используются последние сохранённые параметры, а если их нет — встроенные.
+
+Если серверы WARP не ответили, VPN выключается, чтобы не оставить вас без интернета, а конфиг сохраняется — можно попробовать позже.
+
+**Если в России конфиг не создаётся.** РКН блокирует запросы регистрации WARP. Домен `cloudflareclient.com` есть в списке обхода zapret, поэтому при сетевой ошибке Skvoz на время регистрации сам включает обход и потом выключает его обратно. Если и это не помогло, на вкладке VPN есть подсказка «Сделайте конфиг в облаке»: генератор запускается на бесплатном сервере GitHub Codespaces, как советует автор bash-warp-generator, а готовый `warp.conf` открывается в Skvoz одной кнопкой.
+
+### Свой конфиг
+
+1. На странице **VPN** нажмите **«Выбрать файл .conf»** или вставьте текст конфига и нажмите **«Сохранить текст»**.
+2. Включите **VPN** на Главной или в трее.
+
+Кнопка **«Экспорт .conf»** сохраняет текущий конфиг в файл, например чтобы подключить телефон через приложение AmneziaWG.
+
+### Что важно знать
+
+- Конфиг хранится в `C:ProgramDataSkvozamneziawgconf`, доступ к нему есть только у администраторов.
+- При выходе из Skvoz VPN выключается. **Автозапуск VPN** — во вкладке **Авто**.
+- Пока VPN включён, весь трафик идёт через него. Если сервер перестал отвечать, интернет не работает, пока VPN не выключен, — так задумано в AmneziaWG, чтобы трафик не утекал мимо VPN.
+- Cloudflare WARP — сервис Cloudflare, а генератор использует неофициальный способ регистрации. Cloudflare может изменить или ограничить его в любой момент.
 
 ## Свои домены и IP
 
@@ -70,6 +107,7 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 - **Автозапуск приложения** — открывает Skvoz при входе в Windows (через планировщик задач).
 - **Автозапуск обхода** — по умолчанию выключен; включает zapret при старте приложения.
 - **Автозапуск прокси** — включает TG WS Proxy при старте приложения.
+- **Автозапуск VPN** — подключает VPN при старте приложения.
 - **Сворачивать в трей** — крестик прячет окно, обход и прокси продолжают работать.
 
 **Обход**
@@ -86,7 +124,7 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 
 | Клавиши | Действие |
 |---------|----------|
-| Ctrl+1…6 | Главная, Обход, Telegram, Фильтры, Авто, Сервис |
+| Ctrl+1…7 | Главная, Обход, Telegram, VPN, Фильтры, Авто, Сервис |
 | F5 / Ctrl+R | Обновить статус |
 | Esc | Закрыть диалог |
 
@@ -102,14 +140,26 @@ Skvoz (бывший Zapret App) — пульт для [zapret-discord-youtube](h
 git clone https://github.com/tw1xtyq/skvoz.git
 cd skvoz
 npm ci
+npm run vendor
 npm run build
 npm start
 ```
 
-Установщик и portable: `npm run pack`, файлы появятся в `release/`.
+`npm run vendor` скачивает AmneziaWG и wgcf в `vendor/` (последние релизы с проверкой SHA-256; `SKVOZ_VENDOR_PINNED=1` — закреплённые версии). Установщик и portable: `npm run pack`, файлы появятся в `release/`.
 
 ## Лицензия
 
 MIT — см. [LICENSE](LICENSE).
 
-Основа обхода: [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube).
+## Авторы и благодарности
+
+Skvoz работает благодаря этим проектам:
+
+- [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) — Flowseal, на основе [zapret](https://github.com/bol-van/zapret) от bol-van: обход блокировок;
+- [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) — Flowseal: Telegram-прокси, портирован в Skvoz;
+- [bash-warp-generator](https://github.com/ImMALWARE/bash-warp-generator) — MALWARE: способ регистрации WARP и параметры маскировки ([гайд](https://wiki.malw.link/network/vpns/warp));
+- [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-windows-client) и [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools) — Amnezia VPN: туннель VPN;
+- [wgcf](https://github.com/ViRb3/wgcf) — ViRb3: запасной способ регистрации WARP;
+- [Wintun](https://www.wintun.net/) — WireGuard LLC: виртуальный сетевой адаптер.
+
+Что именно используется и под какими лицензиями — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), тексты лицензий — в [licenses/](licenses/). Skvoz не связан с этими проектами и с Cloudflare и не одобрен ими.

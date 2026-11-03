@@ -77,7 +77,43 @@ interface AccessResult {
   detail: string;
 }
 
+interface VpnConfigSummary {
+  endpoint: string;
+  address: string;
+  dns: string;
+  fullTunnel: boolean;
+  obfuscated: boolean;
+}
+
+interface VpnState {
+  bundled: boolean;
+  configured: boolean;
+  running: boolean;
+  busy: boolean;
+  serviceState: string;
+  summary: VpnConfigSummary | null;
+  autostart: boolean;
+  handshakeAgoSec: number | null;
+  rxBytes: number;
+  txBytes: number;
+}
+
 interface ZapretApi {
+  vpnStatus(): Promise<VpnState>;
+  vpnImportFile(): Promise<{ canceled: true } | { canceled: false; summary: VpnConfigSummary }>;
+  vpnImportText(text: string): Promise<{ summary: VpnConfigSummary }>;
+  vpnRemoveConfig(): Promise<{ ok: boolean }>;
+  vpnWarpEndpoints(): Promise<Array<{ value: string; label: string }>>;
+  vpnGenerateWarp(options: { endpoint: string; preset: string }): Promise<{
+    summary: VpnConfigSummary;
+    candidate: { endpoint: string; preset: string };
+    connected: boolean;
+  }>;
+  vpnExportConfig(): Promise<{ canceled: true } | { canceled: false; filePath: string }>;
+  onVpnProgress(callback: (payload: { text: string }) => void): () => void;
+  vpnConnect(): Promise<{ ok: boolean }>;
+  vpnDisconnect(): Promise<{ ok: boolean }>;
+  vpnSetAutostart(enabled: boolean): Promise<{ autostart: boolean }>;
   tgwsGetConfig(): Promise<TgwsProxyConfig>;
   tgwsSetConfig(updates: Partial<TgwsProxyConfig>): Promise<{ ok: boolean }>;
   tgwsStart(): Promise<{ ok: boolean }>;
@@ -254,6 +290,8 @@ const ACTION_BUTTON_IDS = [
 const els = {
   statusBadge: document.getElementById('statusBadge')!,
   statusText: document.getElementById('statusText')!,
+  statusTg: document.getElementById('statusTg')!,
+  statusVpn: document.getElementById('statusVpn')!,
   officialWarning: document.getElementById('officialWarning')!,
   adminBanner: document.getElementById('adminBanner')!,
   btnRestartAdmin: document.getElementById('btnRestartAdmin') as HTMLButtonElement,
@@ -384,6 +422,32 @@ const els = {
   tgProxyLink: document.getElementById('tgProxyLink') as HTMLInputElement,
   tgAutostart: document.getElementById('tgAutostart') as HTMLInputElement,
   btnTgSaveConfig: document.getElementById('btnTgSaveConfig') as HTMLButtonElement,
+  quickVpnCard: document.getElementById('quickVpnCard')!,
+  quickVpnDot: document.getElementById('quickVpnDot')!,
+  quickVpnText: document.getElementById('quickVpnText')!,
+  quickVpnMeta: document.getElementById('quickVpnMeta')!,
+  btnQuickVpn: document.getElementById('btnQuickVpn') as HTMLButtonElement,
+  vpnStatusDot: document.getElementById('vpnStatusDot')!,
+  vpnDeckTitle: document.getElementById('vpnDeckTitle')!,
+  vpnDeckMeta: document.getElementById('vpnDeckMeta')!,
+  vpnStatHandshake: document.getElementById('vpnStatHandshake')!,
+  vpnStatRx: document.getElementById('vpnStatRx')!,
+  vpnStatTx: document.getElementById('vpnStatTx')!,
+  vpnEndpoint: document.getElementById('vpnEndpoint')!,
+  vpnObfuscation: document.getElementById('vpnObfuscation')!,
+  vpnAddress: document.getElementById('vpnAddress')!,
+  vpnConfigText: document.getElementById('vpnConfigText') as HTMLTextAreaElement,
+  btnVpnImportFile: document.getElementById('btnVpnImportFile') as HTMLButtonElement,
+  btnVpnSaveText: document.getElementById('btnVpnSaveText') as HTMLButtonElement,
+  btnVpnRemoveConfig: document.getElementById('btnVpnRemoveConfig') as HTMLButtonElement,
+  vpnAutostart: document.getElementById('vpnAutostart') as HTMLInputElement,
+  vpnGenEndpoint: document.getElementById('vpnGenEndpoint') as HTMLSelectElement,
+  vpnGenPreset: document.getElementById('vpnGenPreset') as HTMLSelectElement,
+  btnVpnGenerate: document.getElementById('btnVpnGenerate') as HTMLButtonElement,
+  btnVpnExport: document.getElementById('btnVpnExport') as HTMLButtonElement,
+  vpnCloudHelp: document.getElementById('vpnCloudHelp') as HTMLDetailsElement,
+  btnVpnCloudOpen: document.getElementById('btnVpnCloudOpen') as HTMLButtonElement,
+  btnVpnCloudImport: document.getElementById('btnVpnCloudImport') as HTMLButtonElement,
   btnCheckAccess: document.getElementById('btnCheckAccess') as HTMLButtonElement,
   accessMeta: document.getElementById('accessMeta')!,
   accessGrid: document.getElementById('accessGrid')!,
@@ -422,6 +486,11 @@ let tgwsRunning = false;
 let tgwsStats: TgwsProxyStats = { total: 0, active: 0, ws: 0, tcp: 0, bad: 0 };
 let tgwsPollTimer: number | null = null;
 let tgConfigDirty = false;
+let vpnState: VpnState | null = null;
+let vpnBusy = false;
+let vpnProgressText: string | null = null;
+let vpnEndpointSelect: CustomSelectHandle | null = null;
+let vpnPresetSelect: CustomSelectHandle | null = null;
 
 async function refreshAdminState(): Promise<void> {
   try {
@@ -850,6 +919,7 @@ function updateControls(status: StatusPayload | null): void {
   els.btnQuickBypass.disabled = pickLocked || busy || (running ? !hasPath : !canStart);
   els.btnQuickBypass.textContent = running ? 'Остановить' : 'Включить';
   els.btnQuickTg.disabled = pickLocked || busy;
+  els.btnQuickVpn.disabled = pickLocked || vpnBusy;
   updateAdminHint(status);
 }
 
@@ -1857,6 +1927,11 @@ els.btnDismissAppUpdate.addEventListener('click', () => {
 
 els.linkAppDocs.addEventListener('click', () => void api.openExternal('https://github.com/tw1xtyq/skvoz#readme'));
 
+document.getElementById('creditLinks')?.addEventListener('click', (event) => {
+  const link = (event.target as HTMLElement).closest<HTMLElement>('[data-url]');
+  if (link?.dataset.url) void api.openExternal(link.dataset.url);
+});
+
 els.linkOfficial.addEventListener('click', (e) => {
   e.preventDefault();
   void api.openDownloadPage();
@@ -2045,12 +2120,13 @@ els.btnRestartAdmin?.addEventListener('click', () => {
 
 // ── App tabs ────────────────────────────────────────────────────────────────
 
-type AppView = 'home' | 'bypass' | 'telegram' | 'settings' | 'auto' | 'tools';
+type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'auto' | 'tools';
 
 const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
-  home: ['Главная', 'Zapret и Telegram proxy в одном окне'],
+  home: ['Главная', 'Zapret, Telegram proxy и VPN в одном окне'],
   bypass: ['Обход', 'Запуск zapret и выбор конфига'],
   telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
+  vpn: ['VPN', 'AmneziaWG прямо из Skvoz'],
   settings: ['Фильтры', 'Игровой фильтр, IPSet и свои списки'],
   auto: ['Авто', 'Автозапуск, восстановление и обновления'],
   tools: ['Сервис', 'Инструменты, журнал и о программе'],
@@ -2098,6 +2174,11 @@ document.querySelectorAll<HTMLButtonElement>('.side-nav-btn, [data-goto]').forEa
 });
 els.btnQuickBypass.addEventListener('click', () => els.btnToggle.click());
 els.btnQuickTg.addEventListener('click', () => els.btnTgToggle.click());
+els.btnQuickVpn.addEventListener('click', () => {
+  // Без конфига — сразу создаём WARP с автоподбором: один клик от Главной до работающего VPN
+  if (vpnState?.configured || vpnState?.running) void toggleVpn();
+  else void createWarpVpn('auto', 'auto');
+});
 
 // Restore last selected tab
 {
@@ -2129,11 +2210,12 @@ document.addEventListener('keydown', (event) => {
   if (busy) return;
   void refreshStatus(true);
   void loadTgwsState();
+  void loadVpnState();
   toast('Статус обновлён', 'info');
 });
 
-// Ctrl+1…6 — страницы
-const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'settings', 'auto', 'tools'];
+// Ctrl+1…7 — страницы
+const HOTKEY_VIEWS: AppView[] = ['home', 'bypass', 'telegram', 'vpn', 'settings', 'auto', 'tools'];
 document.addEventListener('keydown', (event) => {
   if (!event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return;
   const index = Number(event.key) - 1;
@@ -2206,6 +2288,8 @@ async function loadTgwsState(): Promise<void> {
       ? 'Подключение MTProto→WebSocket через локальный прокси'
       : 'Включается на Главной или из трея';
     els.tgStatusDot.classList.toggle('is-live', tgwsRunning);
+    els.statusTg.classList.toggle('running', tgwsRunning);
+    els.statusTg.title = tgwsRunning ? 'Telegram proxy работает' : 'Telegram proxy выключен';
 
     // Stats
     els.tgStatTotal.textContent = String(tgwsStats.total);
@@ -2250,7 +2334,9 @@ async function loadTgwsState(): Promise<void> {
 function startTgwsPoll(): void {
   if (tgwsPollTimer) clearInterval(tgwsPollTimer);
   tgwsPollTimer = window.setInterval(() => {
-    if (appWindowVisible && !document.hidden) void loadTgwsState();
+    if (!appWindowVisible || document.hidden) return;
+    void loadTgwsState();
+    void loadVpnState();
   }, 5_000);
 }
 
@@ -2382,6 +2468,239 @@ els.btnTgSaveConfig.addEventListener('click', async () => {
 // Initialize TG state on load
 void loadTgwsState();
 startTgwsPoll();
+
+// ── VPN (AmneziaWG) ─────────────────────────────────────────────────────────
+
+function formatTraffic(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} ГБ`;
+}
+
+function formatHandshake(seconds: number | null): string {
+  if (seconds === null) return '—';
+  if (seconds < 60) return `${seconds} с`;
+  return `${Math.floor(seconds / 60)} мин`;
+}
+
+function renderVpnState(state: VpnState): void {
+  const { running, configured, summary } = state;
+  const pending = vpnBusy || state.busy || state.serviceState.endsWith('_PENDING');
+  // Рукопожатие старше 3 минут — сервер не отвечает, хотя служба работает
+  const stale = running && (state.handshakeAgoSec === null || state.handshakeAgoSec > 180);
+
+  els.vpnDeckTitle.textContent = vpnProgressText
+    ? 'Настраиваем VPN…'
+    : pending
+    ? 'Подключаемся…'
+    : running
+      ? `Подключено к ${summary?.endpoint ?? 'серверу'}`
+      : configured
+        ? 'VPN выключен'
+        : 'Конфиг не добавлен';
+  els.vpnDeckMeta.textContent = vpnProgressText
+    ? vpnProgressText
+    : running
+    ? stale
+      ? 'Ждём ответа сервера — если долго нет, проверьте конфиг'
+      : summary?.fullTunnel
+        ? 'Весь трафик идёт через VPN'
+        : 'Через VPN идут адреса из AllowedIPs'
+    : configured
+      ? 'Включается на Главной или из трея'
+      : state.bundled
+        ? 'Нажмите «Создать и подключить» — конфиг появится сам'
+        : 'В этой сборке нет файлов AmneziaWG — переустановите Skvoz';
+  els.vpnStatusDot.classList.toggle('is-live', running && !stale && !vpnProgressText);
+  els.statusVpn.classList.toggle('running', running && !stale);
+  els.statusVpn.classList.toggle('warning', running && stale);
+  els.statusVpn.title = running ? (stale ? 'VPN: ждём ответа сервера' : 'VPN подключён') : 'VPN выключен';
+  els.vpnStatusDot.classList.toggle('is-pending', !!vpnProgressText || pending);
+  els.vpnStatHandshake.textContent = running ? formatHandshake(state.handshakeAgoSec) : '—';
+  els.vpnStatRx.textContent = formatTraffic(state.rxBytes);
+  els.vpnStatTx.textContent = formatTraffic(state.txBytes);
+
+  els.vpnEndpoint.textContent = summary?.endpoint ?? '—';
+  els.vpnAddress.textContent = summary?.address ?? '—';
+  els.vpnObfuscation.textContent = summary ? (summary.obfuscated ? 'AmneziaWG (включена)' : 'нет, обычный WireGuard') : '—';
+  els.btnVpnRemoveConfig.disabled = vpnBusy || !configured;
+  els.btnVpnImportFile.disabled = vpnBusy;
+  els.btnVpnSaveText.disabled = vpnBusy;
+  els.btnVpnExport.disabled = vpnBusy || !configured;
+  els.btnVpnGenerate.disabled = vpnBusy;
+  vpnEndpointSelect?.setDisabled(vpnBusy);
+  vpnPresetSelect?.setDisabled(vpnBusy);
+  els.vpnAutostart.checked = state.autostart;
+
+  els.quickVpnCard.classList.toggle('is-live', running);
+  els.quickVpnCard.classList.toggle('is-unavailable', !configured && !running);
+  els.quickVpnDot.classList.toggle('is-live', running && !stale);
+  els.quickVpnText.textContent = vpnProgressText
+    ? vpnProgressText
+    : pending
+    ? 'Подключаемся…'
+    : running
+      ? stale
+        ? 'Ждём ответа сервера'
+        : 'VPN включён'
+      : configured
+        ? 'VPN выключен'
+        : 'Нужен конфиг AmneziaWG';
+  els.quickVpnMeta.textContent = running
+    ? `${summary?.endpoint ?? ''} · ↓ ${formatTraffic(state.rxBytes)} ↑ ${formatTraffic(state.txBytes)}`
+    : configured && state.autostart
+      ? 'Подключается вместе с приложением'
+      : '';
+  els.btnQuickVpn.textContent = running ? 'Остановить' : configured ? 'Включить' : 'Создать VPN';
+  els.btnQuickVpn.disabled = strategyPickActive || vpnBusy;
+}
+
+async function loadVpnState(): Promise<void> {
+  try {
+    vpnState = await api.vpnStatus();
+    renderVpnState(vpnState);
+  } catch (err) {
+    log(`VPN: ${formatUserError(err)}`, 'error');
+  }
+}
+
+async function runVpnAction(action: () => Promise<void>, failureTitle: string): Promise<void> {
+  if (vpnBusy) return;
+  vpnBusy = true;
+  if (vpnState) renderVpnState(vpnState);
+  try {
+    await action();
+  } catch (err) {
+    reportFailure(err, failureTitle);
+  } finally {
+    vpnBusy = false;
+    await loadVpnState();
+  }
+}
+
+async function toggleVpn(): Promise<void> {
+  const wasRunning = !!vpnState?.running;
+  await runVpnAction(async () => {
+    if (wasRunning) {
+      await api.vpnDisconnect();
+      toast('VPN выключен', 'info');
+    } else {
+      await api.vpnConnect();
+      toast('VPN подключён', 'success');
+    }
+  }, wasRunning ? 'Не удалось выключить VPN' : 'Не удалось подключить VPN');
+}
+
+els.btnVpnImportFile.addEventListener('click', () => {
+  void runVpnAction(async () => {
+    const result = await api.vpnImportFile();
+    if (result.canceled) return;
+    toast(`Конфиг добавлен · ${result.summary.endpoint}`, 'success');
+  }, 'Не удалось добавить конфиг');
+});
+
+els.btnVpnSaveText.addEventListener('click', () => {
+  const text = els.vpnConfigText.value.trim();
+  if (!text) {
+    toast('Вставьте текст конфига', 'info');
+    return;
+  }
+  void runVpnAction(async () => {
+    const { summary } = await api.vpnImportText(text);
+    // Приватный ключ не держим на экране дольше нужного
+    els.vpnConfigText.value = '';
+    toast(`Конфиг сохранён · ${summary.endpoint}`, 'success');
+  }, 'Не удалось сохранить конфиг');
+});
+
+els.btnVpnRemoveConfig.addEventListener('click', () => {
+  void (async () => {
+    const ok = await confirmModal('Удалить конфиг VPN', 'VPN отключится, а конфиг с ключом будет удалён с компьютера.');
+    if (!ok) return;
+    await runVpnAction(async () => {
+      await api.vpnRemoveConfig();
+      toast('Конфиг удалён', 'info');
+    }, 'Не удалось удалить конфиг');
+  })();
+});
+
+els.btnVpnGenerate.addEventListener('click', () => {
+  void (async () => {
+    if (vpnState?.configured) {
+      const ok = await confirmModal(
+        'Создать новый конфиг',
+        'Текущий конфиг VPN будет заменён новым конфигом Cloudflare WARP.',
+        'Если старый пригодится, сначала сохраните его кнопкой «Экспорт .conf».'
+      );
+      if (!ok) return;
+    }
+    await createWarpVpn(els.vpnGenEndpoint.value, els.vpnGenPreset.value);
+  })();
+});
+
+async function createWarpVpn(endpoint: string, preset: string): Promise<void> {
+  vpnProgressText = 'Готовим генератор…';
+  els.btnVpnGenerate.textContent = 'Настраиваем…';
+  await runVpnAction(async () => {
+    try {
+      const result = await api.vpnGenerateWarp({ endpoint, preset });
+      toast(`VPN подключён · ${result.candidate.endpoint}`, 'success');
+    } catch (error) {
+      // Показываем запасной путь — генерацию в облаке
+      els.vpnCloudHelp.open = true;
+      setActiveAppView('vpn');
+      throw error;
+    } finally {
+      vpnProgressText = null;
+      els.btnVpnGenerate.textContent = 'Создать и подключить';
+    }
+  }, 'Не удалось создать VPN');
+}
+
+api.onVpnProgress(({ text }) => {
+  if (!vpnBusy) return;
+  vpnProgressText = text;
+  if (vpnState) renderVpnState(vpnState);
+});
+
+els.btnVpnCloudOpen.addEventListener('click', () => {
+  void api.openExternal(els.btnVpnCloudOpen.dataset.url!);
+});
+els.btnVpnCloudImport.addEventListener('click', () => els.btnVpnImportFile.click());
+
+els.btnVpnExport.addEventListener('click', () => {
+  void runVpnAction(async () => {
+    const result = await api.vpnExportConfig();
+    if (!result.canceled) toast('Конфиг сохранён в файл — никому не показывайте его', 'success');
+  }, 'Не удалось сохранить конфиг');
+});
+
+void api
+  .vpnWarpEndpoints()
+  .then((endpoints) => {
+    for (const endpoint of endpoints) els.vpnGenEndpoint.add(new Option(endpoint.label, endpoint.value));
+    els.vpnGenEndpoint.value = 'auto';
+    els.vpnGenPreset.value = 'auto';
+    vpnEndpointSelect = enhanceSelect(els.vpnGenEndpoint);
+    vpnPresetSelect = enhanceSelect(els.vpnGenPreset);
+  })
+  .catch((err) => log(`VPN: ${formatUserError(err)}`, 'error'));
+
+els.vpnAutostart.addEventListener('change', () => {
+  const enabled = els.vpnAutostart.checked;
+  void api
+    .vpnSetAutostart(enabled)
+    .then(() => {
+      toast(enabled ? 'VPN будет подключаться вместе с приложением' : 'Автозапуск VPN выключен', 'success');
+      void loadVpnState();
+    })
+    .catch((err) => {
+      els.vpnAutostart.checked = !enabled;
+      reportFailure(err, 'Не удалось сохранить автозапуск VPN');
+    });
+});
+
+void loadVpnState();
 
 els.btnUpdateIpset.addEventListener('click', () => {
   void runTool('Обновление IPSet', () => api.updateIpsetList());

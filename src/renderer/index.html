@@ -35,15 +35,19 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 4.5 3.5 11l6 2.2 2.2 6.3 3.1-4 4.2 3.1z"/><path d="m9.5 13.2 6.7-5.4"/></svg>
         <b>Telegram</b>
       </button>
-      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="4" title="Ctrl+4 · Фильтры и свои списки">
+      <button class="side-nav-btn" id="navVpn" type="button" data-view="vpn" data-hotkey="4" title="Ctrl+4 · VPN AmneziaWG">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/></svg>
+        <b>VPN</b>
+      </button>
+      <button class="side-nav-btn" id="navSettings" type="button" data-view="settings" data-hotkey="5" title="Ctrl+5 · Фильтры и свои списки">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
         <b>Фильтры</b>
       </button>
-      <button class="side-nav-btn" id="navAuto" type="button" data-view="auto" data-hotkey="5" title="Ctrl+5 · Автозапуск и обновления">
+      <button class="side-nav-btn" id="navAuto" type="button" data-view="auto" data-hotkey="6" title="Ctrl+6 · Автозапуск и обновления">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/><path d="M12 8v4l3 2"/></svg>
         <b>Авто</b>
       </button>
-      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Инструменты, журнал и о программе">
+      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="7" title="Ctrl+7 · Инструменты, журнал и о программе">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 10 2.5 2L8 14M12.5 14H16"/></svg>
         <b>Сервис</b>
       </button>
@@ -54,13 +58,19 @@
     <header class="topbar">
       <div class="page-head">
         <h1 id="pageTitle">Главная</h1>
-        <p id="pageSubtitle">Zapret и Telegram proxy в одном окне</p>
+        <p id="pageSubtitle">Zapret, Telegram proxy и VPN в одном окне</p>
       </div>
       <div class="topbar-actions">
         <div class="status-chip" id="statusBadge">
           <span class="status-dot"></span>
           <span id="statusText">Загрузка...</span>
         </div>
+        <button class="status-chip status-pill" id="statusTg" type="button" data-goto="telegram" title="Telegram proxy">
+          <span class="status-dot"></span><span>Telegram</span>
+        </button>
+        <button class="status-chip status-pill" id="statusVpn" type="button" data-goto="vpn" title="VPN">
+          <span class="status-dot"></span><span>VPN</span>
+        </button>
       </div>
     </header>
 
@@ -118,6 +128,16 @@
           </div>
           <div class="quick-control-copy"><strong>TG WS Proxy</strong><span id="quickTgText">Проверяем статус…</span><small class="quick-control-meta" id="quickTgMeta"></small></div>
           <button class="btn btn-soft" id="btnQuickTg" type="button">Включить</button>
+        </div>
+        <div class="quick-control-item" id="quickVpnCard">
+          <div class="quick-control-top">
+            <span class="quick-control-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5z"/></svg>
+            </span>
+            <span class="quick-control-dot" id="quickVpnDot" aria-hidden="true"></span>
+          </div>
+          <div class="quick-control-copy"><strong>VPN</strong><span id="quickVpnText">Проверяем статус…</span><small class="quick-control-meta" id="quickVpnMeta"></small></div>
+          <button class="btn btn-soft" id="btnQuickVpn" type="button">Включить</button>
         </div>
       </div>
 
@@ -312,6 +332,108 @@
       </section>
     </section>
 
+    <!-- VPN -->
+    <section class="page" data-page="vpn">
+      <section class="glass-card tg-deck">
+        <div class="tg-deck-layout">
+          <div class="tg-deck-main">
+            <div class="tg-deck-status">
+              <span class="tg-status-ring" id="vpnStatusDot" aria-hidden="true"><span class="tg-status-dot"></span></span>
+              <div class="tg-deck-copy">
+                <strong class="tg-deck-title" id="vpnDeckTitle">VPN выключен</strong>
+                <p class="tg-deck-meta" id="vpnDeckMeta">Создайте конфиг ниже одной кнопкой</p>
+              </div>
+            </div>
+            <div class="tg-deck-stats">
+              <div class="tg-stat-row"><span class="tg-stat" id="vpnStatHandshake">—</span><span class="tg-stat-label">Ответ сервера</span></div>
+              <div class="tg-stat-row"><span class="tg-stat" id="vpnStatRx">0</span><span class="tg-stat-label">Получено</span></div>
+              <div class="tg-stat-row"><span class="tg-stat" id="vpnStatTx">0</span><span class="tg-stat-label">Отправлено</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="glass-card tg-form">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg></span>
+            <h3>Бесплатный VPN за один клик</h3>
+          </div>
+          <p class="card-hint">Skvoz создаст конфиг Cloudflare WARP с маскировкой AmneziaWG, сам найдёт рабочий сервер и подключится. Ничего искать и устанавливать не нужно</p>
+        </header>
+        <div class="tg-grid">
+          <div class="tg-field">
+            <label class="field-label" for="vpnGenEndpoint">Сервер WARP</label>
+            <select id="vpnGenEndpoint">
+              <option value="auto">Автоподбор — рекомендуется</option>
+            </select>
+          </div>
+          <div class="tg-field">
+            <label class="field-label" for="vpnGenPreset">Маскировка</label>
+            <select id="vpnGenPreset">
+              <option value="auto">Автоподбор — рекомендуется</option>
+              <option value="quic">Усиленная</option>
+              <option value="light">Лёгкая</option>
+            </select>
+          </div>
+        </div>
+        <div class="tg-form-foot">
+          <p class="card-hint">Обычно хватает 10–30 секунд. При автоподборе проверяется до шести вариантов</p>
+          <div class="tg-actions">
+            <button class="btn btn-glow btn-sm" id="btnVpnGenerate" type="button">Создать и подключить</button>
+          </div>
+        </div>
+        <details class="disclosure" id="vpnCloudHelp">
+          <summary>Не создаётся? Сделайте конфиг в облаке</summary>
+          <div class="disclosure-body">
+            <p class="card-hint">РКН блокирует регистрацию WARP из России. Skvoz сам включает обход zapret на время регистрации, но если не помогло — запустите генератор на бесплатном сервере GitHub, как советует автор bash-warp-generator:</p>
+            <ol class="steps">
+              <li>Откройте Codespaces и войдите в GitHub</li>
+              <li>Нажмите <b>Create codespace on main</b> и подождите 10–30 секунд</li>
+              <li>В терминале выполните <code>bash warp_generator.sh</code></li>
+              <li>Скачайте <code>warp.conf</code> (правый клик по файлу → Скачать) и откройте его здесь</li>
+            </ol>
+            <div class="tg-actions">
+              <button class="btn btn-soft btn-sm" id="btnVpnCloudOpen" type="button" data-url="https://github.com/ImMALWARE/bash-warp-generator/codespaces">Открыть Codespaces</button>
+              <button class="btn btn-soft btn-sm" id="btnVpnCloudImport" type="button">Открыть warp.conf</button>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section class="glass-card tg-form">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20.5H7z"/><path d="M14 3.5v4h4M10 12h5M10 16h5"/></svg></span>
+            <h3>Конфиг AmneziaWG</h3>
+          </div>
+          <p class="card-hint">Текущий конфиг или свой .conf от VPN-сервера. Всё работает внутри Skvoz — ставить AmneziaWG не нужно</p>
+        </header>
+        <dl class="kv-list" id="vpnSummary">
+          <div class="kv-row"><dt>Сервер</dt><dd id="vpnEndpoint">—</dd></div>
+          <div class="kv-row"><dt>Маскировка</dt><dd id="vpnObfuscation">—</dd></div>
+          <div class="kv-row"><dt>Адрес в туннеле</dt><dd id="vpnAddress">—</dd></div>
+        </dl>
+        <div class="tg-form-foot">
+          <div class="tg-actions">
+            <button class="btn btn-soft btn-sm" id="btnVpnImportFile" type="button">Открыть файл .conf</button>
+            <button class="btn btn-soft btn-sm" id="btnVpnExport" type="button">Сохранить в файл</button>
+            <button class="btn btn-ghost btn-sm btn-danger-text" id="btnVpnRemoveConfig" type="button">Удалить</button>
+          </div>
+        </div>
+        <details class="disclosure">
+          <summary>Вставить конфиг текстом</summary>
+          <div class="disclosure-body">
+            <label class="field-label" for="vpnConfigText">Содержимое .conf</label>
+            <textarea id="vpnConfigText" class="user-list-editor" rows="6" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = …&#10;&#10;[Peer]&#10;Endpoint = …"></textarea>
+            <div class="tg-actions">
+              <button class="btn btn-soft btn-sm" id="btnVpnSaveText" type="button">Применить</button>
+            </div>
+          </div>
+        </details>
+      </section>
+    </section>
+
     <!-- Настройки -->
     <section class="page" data-page="settings">
       <section class="glass-card bento-card needs-zapret">
@@ -429,6 +551,16 @@
               <span class="switch-copy">
                 <span class="switch-title">Автозапуск прокси</span>
                 <span class="switch-desc">Включать TG WS Proxy при открытии приложения</span>
+              </span>
+            </label>
+          </div>
+          <div class="setting-block setting-block-compact">
+            <label class="switch">
+              <input type="checkbox" id="vpnAutostart">
+              <span class="switch-ui"></span>
+              <span class="switch-copy">
+                <span class="switch-title">Автозапуск VPN</span>
+                <span class="switch-desc">Подключать VPN при открытии приложения</span>
               </span>
             </label>
           </div>
@@ -574,6 +706,42 @@
           </button>
           <button class="about-link" id="linkOfficial" type="button">
             <strong>Официальный zapret</strong><span>Flowseal/zapret-discord-youtube</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="glass-card bento-card about-card">
+        <header class="card-head card-head-stack">
+          <div class="card-head-row">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.4-7.5-10A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.9c0 5.6-7.5 10-7.5 10z"/></svg></span>
+            <h3>Авторы и лицензии</h3>
+          </div>
+          <p class="card-hint">Skvoz работает благодаря этим проектам. Тексты лицензий лежат в папке программы: resources\licenses</p>
+        </header>
+        <div class="about-links" id="creditLinks">
+          <button class="about-link" type="button" data-url="https://github.com/Flowseal/zapret-discord-youtube">
+            <strong>zapret-discord-youtube</strong><span>Flowseal · обход блокировок · MIT</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/bol-van/zapret">
+            <strong>zapret</strong><span>bol-van · основа обхода, winws</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/Flowseal/tg-ws-proxy">
+            <strong>tg-ws-proxy</strong><span>Flowseal · Telegram-прокси · MIT</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/ImMALWARE/bash-warp-generator">
+            <strong>bash-warp-generator</strong><span>MALWARE · генератор WARP · MIT</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/amnezia-vpn/amneziawg-windows-client">
+            <strong>AmneziaWG</strong><span>Amnezia VPN · туннель VPN · MIT, GPL-2.0</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/ViRb3/wgcf">
+            <strong>wgcf</strong><span>ViRb3 · регистрация WARP · MIT</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://www.wintun.net/">
+            <strong>Wintun</strong><span>WireGuard LLC · сетевой адаптер</span>
+          </button>
+          <button class="about-link" type="button" data-url="https://github.com/tw1xtyq/skvoz/blob/main/THIRD_PARTY_NOTICES.md">
+            <strong>Все лицензии</strong><span>Полный список и условия</span>
           </button>
         </div>
       </section>
