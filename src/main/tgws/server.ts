@@ -21,6 +21,7 @@ import { httpFetch } from '../http';
  * Telegram Desktop -> 127.0.0.1:port (obfuscated MTProto, dd-secret)
  *   -> WebSocket (TLS) to kws<dc>.web.telegram.org/apiws
  *   -> fallback: CF-proxy domains -> fallback: direct TCP to the DC.
+ * CDN DCs (id >= 200) have no WebSocket gateway of their own: they start at the CF step.
  */
 
 export type TgwsLogLevel = 'info' | 'success' | 'warn' | 'error';
@@ -100,11 +101,52 @@ function isDomain(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z0-9-]+(.[a-z0-9-]+)+$/i.test(value);
 }
 
-function wsDomains(dc: number, isMedia: boolean): string[] {
-  const mapped = dc === 203 ? 2 : dc;
-  if (!isMedia) return ['kws' + mapped + '.web.telegram.org'];
-  return ['kws' + mapped + '-1.web.telegram.org', 'kws' + mapped + '.web.telegram.org'];
+/** DC от 200 — CDN Telegram: у них свои ключи, а kws2 с таким номером отвечает обычным DC, и клиент отбрасывает ответ */
+export function isCdnDc(dc: number): boolean {
+  return dc >= 200;
 }
+
+export interface WsRoute {
+  host: string;
+  domain: string;
+}
+
+/** Прямые WebSocket-маршруты: закреплённый IP и обычный DNS идут параллельно */
+export function wsRoutes(dc: number, isMedia: boolean): WsRoute[] {
+  if (isCdnDc(dc)) return [];
+  const domains = isMedia
+    ? ['kws' + dc + '-1.web.telegram.org', 'kws' + dc + '.web.telegram.org']
+    : ['kws' + dc + '.web.telegram.org'];
+  const pinnedIp = DC_REDIRECTS[dc];
+  return domains.flatMap((domain) => [
+    ...(pinnedIp ? [{ host: pinnedIp, domain }] : []),
+    { host: domain, domain },
+  ]);
+}
+
+/** Пропускает повторы одного сообщения: одна строка в окно и счётчик пропущенных */
+export class RepeatFilter {
+  private readonly seen = new Map<string, { at: number; skipped: number }>();
+
+  constructor(
+    private readonly windowMs: number,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  accept(key: string): { show: boolean; skipped: number } {
+    const at = this.now();
+    const entry = this.seen.get(key);
+    if (entry && at - entry.at < this.windowMs) {
+      entry.skipped += 1;
+      return { show: false, skipped: entry.skipped };
+    }
+    this.seen.set(key, { at, skipped: 0 });
+    return { show: true, skipped: entry?.skipped ?? 0 };
+  }
+}
+
+const WS_CONNECT_TIMEOUT_MS = 6_000;
+const CF_BATCH_SIZE = 5;
 
 function shuffle<T>(items: T[]): T[] {
   const list = [...items];
@@ -167,6 +209,8 @@ export class TgwsServer {
   private cfDomains: string[] = [];
   private cfRefreshTimer: NodeJS.Timeout | null = null;
   private cfRefreshing = false;
+  /** CF-домен, через который Telegram уже отвечал, по номеру DC */
+  private readonly cfWorking = new Map<number, string>();
 
   readonly stats: TgwsServerStats = { total: 0, active: 0, ws: 0, tcp: 0, bad: 0 };
 
@@ -262,7 +306,8 @@ export class TgwsServer {
 
       const upstream = await this.connectUpstream(hs.dcId, hs.isMedia, hs.isTestDc);
       if (!upstream) {
-        this.log('warn', '[' + label + '] ' + dcTag + ': нет доступного маршрута к Telegram');
+        const target = isCdnDc(hs.dcId) ? 'к CDN Telegram: файлы из некоторых каналов могут не загружаться' : 'к Telegram';
+        this.log('warn', '[' + label + '] ' + dcTag + ': нет доступного маршрута ' + target);
         return;
       }
 
@@ -270,7 +315,11 @@ export class TgwsServer {
         this.stats.ws += 1;
         this.log('info', '[' + label + '] ' + dcTag + ' -> WebSocket (' + upstream.label + ')');
         upstream.ws.send(relay.init);
-        await this.bridgeWs(socket, upstream.ws, hs, relay, read.rest);
+        const answered = await this.bridgeWs(socket, upstream.ws, hs, relay, read.rest);
+        if (upstream.cfDomain) {
+          if (answered) this.cfWorking.set(hs.dcId, upstream.cfDomain);
+          else if (this.cfWorking.get(hs.dcId) === upstream.cfDomain) this.cfWorking.delete(hs.dcId);
+        }
       } else {
         this.stats.tcp += 1;
         this.log('warn', '[' + label + '] ' + dcTag + ' -> прямой TCP (' + upstream.socket.remoteAddress + ')');
@@ -293,39 +342,34 @@ export class TgwsServer {
     dc: number,
     isMedia: boolean,
     isTestDc: boolean
-  ): Promise<{ kind: 'ws'; ws: RawWebSocket; label: string } | { kind: 'tcp'; socket: net.Socket } | null> {
+  ): Promise<{ kind: 'ws'; ws: RawWebSocket; label: string; cfDomain?: string } | { kind: 'tcp'; socket: net.Socket } | null> {
     const path = isTestDc ? WS_PATH_TEST : WS_PATH;
 
-    // 1) primary route: kws<dc>.web.telegram.org via pinned IP (or DNS when no redirect)
-    for (const domain of wsDomains(dc, isMedia)) {
-      const pinnedIp = DC_REDIRECTS[dc];
-      try {
-        const ws = await RawWebSocket.connect({
-          host: pinnedIp ?? domain,
-          domain,
-          path,
-          timeoutMs: 8_000,
-        });
-        return { kind: 'ws', ws, label: pinnedIp ? domain + ' -> ' + pinnedIp : domain };
-      } catch {
-        /* try next domain */
-      }
+    // 1) primary route: kws<dc>.web.telegram.org
+    const primary = await this.raceWs(wsRoutes(dc, isMedia), path);
+    if (primary) {
+      const label = primary.route.host === primary.route.domain
+        ? primary.route.domain
+        : primary.route.domain + ' -> ' + primary.route.host;
+      return { kind: 'ws', ws: primary.ws, label };
     }
 
-    // 2) CF-proxy fallback: kws<dc>.<cf-domain>
+    // 2) CF-proxy fallback: kws<dc>.<cf-domain>, сначала тот, что уже отвечал
     if (!isTestDc) {
-      for (const cfDomain of shuffle(this.cfDomains)) {
-        const host = 'kws' + dc + '.' + cfDomain;
-        try {
-          const ws = await RawWebSocket.connect({
-            host,
-            domain: host,
-            path: WS_PATH,
-            timeoutMs: 8_000,
-          });
-          return { kind: 'ws', ws, label: host };
-        } catch {
-          /* try next cf domain */
+      const known = this.cfWorking.get(dc);
+      const rest = shuffle(this.cfDomains.filter((domain) => domain !== known));
+      const batches = known ? [[known]] : [];
+      for (let i = 0; i < rest.length; i += CF_BATCH_SIZE) batches.push(rest.slice(i, i + CF_BATCH_SIZE));
+
+      for (const batch of batches) {
+        const routes = batch.map((cfDomain) => {
+          const host = 'kws' + dc + '.' + cfDomain;
+          return { host, domain: host };
+        });
+        const found = await this.raceWs(routes, WS_PATH);
+        if (found) {
+          const cfDomain = batch[routes.indexOf(found.route)];
+          return { kind: 'ws', ws: found.ws, label: found.route.host, cfDomain };
         }
       }
     }
@@ -357,22 +401,51 @@ export class TgwsServer {
     return null;
   }
 
-  /** Relays until either side closes. */
+  /** Первый ответивший маршрут; опоздавшие соединения закрываются. */
+  private raceWs(routes: WsRoute[], path: string): Promise<{ ws: RawWebSocket; route: WsRoute } | null> {
+    return new Promise((resolve) => {
+      if (routes.length === 0) {
+        resolve(null);
+        return;
+      }
+      let pending = routes.length;
+      let won = false;
+      for (const route of routes) {
+        RawWebSocket.connect({ host: route.host, domain: route.domain, path, timeoutMs: WS_CONNECT_TIMEOUT_MS })
+          .then((ws) => {
+            if (won) {
+              ws.close();
+              return;
+            }
+            won = true;
+            resolve({ ws, route });
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            pending -= 1;
+            if (pending === 0 && !won) resolve(null);
+          });
+      }
+    });
+  }
+
+  /** Relays until either side closes; true, если Telegram хоть что-то ответил. */
   private bridgeWs(
     client: net.Socket,
     upstream: RawWebSocket,
     hs: HandshakeResult,
     relay: RelayInit,
     early: Buffer
-  ): Promise<void> {
+  ): Promise<boolean> {
     return new Promise((resolve) => {
       const splitter = new MsgSplitter(hs.proto);
       let done = false;
+      let answered = false;
       const finish = (): void => {
         if (done) return;
         done = true;
         upstream.close();
-        resolve();
+        resolve(answered);
       };
 
       const fromClient = (chunk: Buffer): void => {
@@ -387,6 +460,7 @@ export class TgwsServer {
       };
 
       upstream.onMessage((msg) => {
+        answered = true;
         if (!done) client.write(hs.cltEnc.update(relay.tgDec.update(msg)));
       });
       upstream.onClose(finish);

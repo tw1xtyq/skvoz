@@ -6,12 +6,13 @@ import {
   readInstalledVersion,
 } from './downloader';
 import { scanForInstallations, verifyInstallation } from './scanner';
-import { runDiagnosticsInApp } from './diagnostics';
+import { parseScState, runDiagnosticsInApp } from './diagnostics';
 import { runTestsInApp, pickBestStrategy } from './tests-runner';
 import {
   killWinwsProcesses,
 } from './bypass-prep';
 import {
+  parseGameFilterMode,
   startBypassHidden,
 } from './service-actions';
 import { fullRemoveZapretFromPc } from './uninstall';
@@ -168,13 +169,12 @@ export function listStrategies(root: string): string[] {
 
 async function queryService(name: string): Promise<ServiceState> {
   try {
-    const output = await runCmd('sc', ['query', name]);
-    const stateMatch = output.match(/STATE\s+:\s+\d+\s+(\w+)/i);
-    if (!stateMatch) {
+    // на русской Windows вместо STATE там «Состояние»: служба выглядела отсутствующей
+    const parsed = parseScState(await runCmd('sc', ['query', name]));
+    if (parsed === 'missing') {
       return { exists: false, running: false, state: 'NOT_FOUND', strategy: null };
     }
-    const state = stateMatch[1];
-    return { exists: true, running: state === 'RUNNING', state, strategy: null };
+    return { exists: true, running: parsed === 'running', state: parsed.toUpperCase(), strategy: null };
   } catch {
     return { exists: false, running: false, state: 'NOT_FOUND', strategy: null };
   }
@@ -217,9 +217,7 @@ async function isWinwsRunning(): Promise<BypassState> {
 function readGameFilter(utilsDir: string): SettingsState['gameFilter'] {
   const flagFile = path.join(utilsDir, 'game_filter.enabled');
   if (!fs.existsSync(flagFile)) return 'disabled';
-  const mode = fs.readFileSync(flagFile, 'utf8').trim().toLowerCase();
-  if (mode === 'all' || mode === 'tcp' || mode === 'udp') return mode;
-  return 'disabled';
+  return parseGameFilterMode(fs.readFileSync(flagFile, 'utf8'));
 }
 
 function readIpsetStatus(listsDir: string): SettingsState['ipset'] {
@@ -426,10 +424,13 @@ export function fullRemoveZapret(
 
 export async function getProcessStatusReport(
   root: string,
-  out: (line: { text: string; level: 'info' | 'success' | 'warn' | 'error' }) => void
+  out: (line: { text: string; level: 'info' | 'success' | 'warn' | 'error' }) => void,
+  activeStrategy?: string | null
 ): Promise<void> {
-  const status = await getStatus(root);
-  const { bypass, zapretService, windivertService, settings, selectedStrategy } = status;
+  const status = await getStatus(root, { fresh: true });
+  const { bypass, zapretService, windivertService, settings } = status;
+  // getStatus знает только службу и general.bat, а выбранный конфиг хранится в настройках
+  const selectedStrategy = activeStrategy ?? status.selectedStrategy;
 
   if (bypass.running) {
     out({
@@ -495,9 +496,10 @@ export async function getProcessStatusReport(
 
 export function getProcessStatus(
   root: string,
-  onLine?: (line: { text: string; level: string }) => void
+  onLine?: (line: { text: string; level: string }) => void,
+  activeStrategy?: string | null
 ): Promise<void> {
-  return getProcessStatusReport(root, (line) => onLine?.(line));
+  return getProcessStatusReport(root, (line) => onLine?.(line), activeStrategy);
 }
 
 export function runDiagnostics(

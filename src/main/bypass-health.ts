@@ -8,6 +8,18 @@ const CONTROL_URLS = [
 
 export type BypassProbeResult = 'ok' | 'blocked' | 'offline';
 
+const PROBE_TIMEOUT_MS = 7_000;
+const PROBE_RETRY_EXTRA_MS = 3_000;
+
+export interface ProbeOptions {
+  timeoutMs?: number;
+  retryDelayMs?: number;
+  /** какие сайты не открылись после повтора */
+  onFailed?: (hosts: string[]) => void;
+  check?: (url: string, timeoutMs: number) => Promise<boolean>;
+  reachable?: () => Promise<boolean>;
+}
+
 const PROBE_TARGET_PATTERN = /youtube|discord/i;
 
 /** Домен или адрес из настроек → https-URL; мусор отбрасываем */
@@ -62,14 +74,36 @@ async function probeBypassReachability(timeoutMs = 4_500): Promise<boolean> {
  * Проверяет сайты, которым нужен обход. Любой HTTP-ответ значит, что TLS прошёл
  * через DPI; при блокировке curl получает сброс соединения и код 000.
  */
-export async function probeBypassTargets(urls: string[], timeoutMs = 5_000): Promise<BypassProbeResult> {
-  if (urls.length > 0) {
-    const results = await Promise.all(urls.map((url) => curlOk(url, timeoutMs, /^[1-5]\d\d$/, true)));
-    if (results.every(Boolean)) return 'ok';
+export async function probeBypassTargets(urls: string[], options: ProbeOptions = {}): Promise<BypassProbeResult> {
+  const timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
+  const check = options.check ?? ((url: string, ms: number) => curlOk(url, ms, /^[1-5]\d\d$/, true));
+  const failing = async (list: string[], ms: number): Promise<string[]> => {
+    const results = await Promise.all(list.map((url) => check(url, ms)));
+    return list.filter((_, index) => !results[index]);
+  };
+
+  let failed = await failing(urls, timeoutMs);
+  if (failed.length > 0) {
+    // Разовая медленная загрузка — ещё не блокировка: за ней следует перезапуск winws,
+    // который сам рвёт соединения, поэтому упавшие сайты проверяем повторно
+    await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs ?? 1_500));
+    failed = await failing(failed, timeoutMs + PROBE_RETRY_EXTRA_MS);
   }
-  const online = await probeBypassReachability(timeoutMs);
+  if (urls.length > 0 && failed.length === 0) return 'ok';
+
+  const online = await (options.reachable ?? (() => probeBypassReachability(timeoutMs)))();
   if (!online) return 'offline';
-  return urls.length > 0 ? 'blocked' : 'ok';
+  if (urls.length === 0) return 'ok';
+  options.onFailed?.(failed.map(probeHost));
+  return 'blocked';
+}
+
+function probeHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 /** Столько тела ответа должно прийти, чтобы считать, что соединение не «замёрзло» */

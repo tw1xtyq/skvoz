@@ -23,11 +23,11 @@ Skvoz не связан ни с одним из перечисленных пр�
 | [tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy) | Flowseal | Локальный Telegram-прокси (MTProto → WebSocket) портирован на TypeScript: `src/main/tgws/`. Список доменов Cloudflare для прокси загружается из этого репозитория | MIT — [licenses/tg-ws-proxy.txt](licenses/tg-ws-proxy.txt) |
 | [bash-warp-generator](https://github.com/ImMALWARE/bash-warp-generator) | MALWARE ([гайд по WARP](https://wiki.malw.link/network/vpns/warp)) | Способ регистрации WARP и параметры маскировки AmneziaWG: Jc/Jmin/Jmax, S1/S2, H1–H4, пакет-приманка `I1`, рекомендуемый сервер. Skvoz периодически читает актуальные значения из `warp_generator.sh` как данные (код не выполняется) | MIT — [licenses/bash-warp-generator.txt](licenses/bash-warp-generator.txt) |
 
-## Что Skvoz скачивает по вашей команде
+## Что Skvoz ставит и обновляет
 
 | Проект | Автор | Как используется | Лицензия |
 |--------|-------|------------------|----------|
-| [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) | Flowseal, на основе [zapret](https://github.com/bol-van/zapret) от bol-van | Скачивается с GitHub по кнопке «Скачать с GitHub» и обновляется. Skvoz запускает его `.bat` и `winws.exe` и не изменяет их | MIT — [licenses/zapret-discord-youtube.txt](licenses/zapret-discord-youtube.txt) |
+| [zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) | Flowseal, на основе [zapret](https://github.com/bol-van/zapret) от bol-van | ZIP с GitHub без изменений едет внутри Skvoz для первой установки, новые версии скачиваются с GitHub. В архиве также [WinDivert](https://github.com/basil00/WinDivert) (LGPL-3.0 или GPL-2.0) и `cygwin1.dll` из [Cygwin](https://cygwin.com/) (LGPL-3.0). Skvoz запускает его `.bat` и `winws.exe` и не изменяет их | MIT — [licenses/zapret-discord-youtube.txt](licenses/zapret-discord-youtube.txt) |
 
 ## Сервисы
 
@@ -36,4 +36,4 @@ Skvoz не связан ни с одним из перечисленных пр�
 
 ## Как компоненты попадают в сборку
 
-`npm run vendor` ([scripts/fetch-vendor.js](scripts/fetch-vendor.js)) берёт последние релизы AmneziaWG и wgcf с GitHub и сверяет SHA-256, который публикует GitHub. Если GitHub недоступен, скрипт использует закреплённые версии с известными контрольными суммами. Файлы ничем не изменяются.
+`npm run vendor` ([scripts/fetch-vendor.js](scripts/fetch-vendor.js)) берёт последние релизы AmneziaWG, wgcf и zapret с GitHub и сверяет SHA-256, который публикует GitHub. Если GitHub недоступен, скрипт использует закреплённые версии с известными контрольными суммами. Файлы ничем не изменяются.

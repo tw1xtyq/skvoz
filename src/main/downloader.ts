@@ -499,6 +499,50 @@ function withManualInstallHint(reason: string): Error {
   return new Error(`${reason}. Можно поставить вручную: скачайте ZIP с ${GITHUB_RELEASES_URL}, распакуйте и нажмите «Найти на ПК».`);
 }
 
+/** Распаковывает архив из tempDir и ставит его на место; существующая установка меняется только в самом конце */
+async function installFromZip(
+  zipPath: string,
+  version: string,
+  tempDir: string,
+  installBase: string,
+  existingRoot: string | null,
+  report: ProgressCallback
+): Promise<{ installPath: string; version: string }> {
+  const installPath = getInstallPath(installBase, version);
+  const extractDir = path.join(tempDir, 'extract');
+
+  await yieldToEventLoop();
+  await extractZip(zipPath, extractDir, report);
+
+  report({ stage: 'install', percent: 5, message: 'Подготовка установки...' });
+  await yieldToEventLoop();
+  const extractedRoot = findZapretRoot(extractDir);
+  if (!extractedRoot) {
+    throw new Error(`После распаковки нет bin/winws.exe. ${ANTIVIRUS_HINT}`);
+  }
+  assertBinariesPresent(extractedRoot);
+
+  const backup =
+    existingRoot && fs.existsSync(existingRoot) ? backupUserFiles(existingRoot) : new Map<string, Buffer>();
+
+  const stagingPath = path.join(tempDir, 'staging');
+  report({ stage: 'install', percent: 25, message: 'Подготовка файлов...' });
+  await yieldToEventLoop();
+  await moveDirectory(extractedRoot, stagingPath);
+  await promoteStagingToInstall(stagingPath, installPath, report);
+
+  report({ stage: 'install', percent: 75, message: 'Восстановление списков...' });
+  restoreUserFiles(installPath, backup);
+  ensureUserListFiles(installPath);
+  await yieldToEventLoop();
+
+  report({ stage: 'install', percent: 90, message: 'Разблокировка winws.exe...' });
+  await unblockZapretBinaries(installPath);
+
+  report({ stage: 'done', percent: 100, message: `Zapret ${version} установлен` });
+  return { installPath, version };
+}
+
 export async function downloadOfficialZapret(
   installBase: string,
   existingRoot: string | null,
@@ -513,10 +557,8 @@ export async function downloadOfficialZapret(
   });
   report({ stage: 'fetch', percent: 100, message: `Найден релиз ${release.version}` });
 
-  const installPath = getInstallPath(installBase, release.version);
   const tempDir = createDownloadTempDir(installBase);
   const zipPath = path.join(tempDir, release.zipName);
-  const extractDir = path.join(tempDir, 'extract');
 
   try {
     report({
@@ -531,45 +573,69 @@ export async function downloadOfficialZapret(
       throw withManualInstallHint(`Не удалось скачать zapret: ${describeNetworkError(error)}`);
     }
 
-    await yieldToEventLoop();
-    await extractZip(zipPath, extractDir, report);
-
-    report({ stage: 'install', percent: 5, message: 'Подготовка установки...' });
-    await yieldToEventLoop();
-    const extractedRoot = findZapretRoot(extractDir);
-    if (!extractedRoot) {
-      throw new Error(`После распаковки нет bin/winws.exe. ${ANTIVIRUS_HINT}`);
-    }
-    assertBinariesPresent(extractedRoot);
-
-    const backup =
-      existingRoot && fs.existsSync(existingRoot) ? backupUserFiles(existingRoot) : new Map<string, Buffer>();
-
-    const stagingPath = path.join(tempDir, 'staging');
-    report({ stage: 'install', percent: 25, message: 'Подготовка файлов...' });
-    await yieldToEventLoop();
-    await moveDirectory(extractedRoot, stagingPath);
-    await promoteStagingToInstall(stagingPath, installPath, report);
-
-    report({ stage: 'install', percent: 75, message: 'Восстановление списков...' });
-    restoreUserFiles(installPath, backup);
-    ensureUserListFiles(installPath);
-    await yieldToEventLoop();
-
-    report({ stage: 'install', percent: 90, message: 'Разблокировка winws.exe...' });
-    await unblockZapretBinaries(installPath);
-    await removeFileQuiet(path.join(installBase, release.zipName));
-
-    report({
-      stage: 'done',
-      percent: 100,
-      message: `Zapret ${release.version} установлен`,
-    });
-
-    return { installPath, version: release.version };
+    return await installFromZip(zipPath, release.version, tempDir, installBase, existingRoot, report);
   } finally {
     await removeDirectory(tempDir, false).catch(() => undefined);
   }
+}
+
+export interface BundledZapret {
+  zipPath: string;
+  version: string;
+  sha256: string;
+}
+
+/** Архив, который едет внутри Skvoz: без него новый пользователь зависит от доступа к GitHub */
+export function readBundledZapret(resourcesDir: string | undefined = process.resourcesPath): BundledZapret | null {
+  if (!resourcesDir) return null;
+  const dir = path.join(resourcesDir, 'zapret');
+  try {
+    const zipPath = path.join(dir, 'zapret.zip');
+    if (!fs.existsSync(zipPath)) return null;
+    return {
+      zipPath,
+      version: fs.readFileSync(path.join(dir, 'VERSION'), 'utf8').trim(),
+      sha256: fs.readFileSync(path.join(dir, 'SHA256'), 'utf8').trim().toLowerCase(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function installBundledZapret(
+  bundled: BundledZapret,
+  installBase: string,
+  onProgress: ProgressCallback
+): Promise<{ installPath: string; version: string }> {
+  const report = createProgressReporter(onProgress);
+  report({ stage: 'install', percent: 0, message: `Установка zapret ${bundled.version}...` });
+
+  const tempDir = createDownloadTempDir(installBase);
+  try {
+    assertChecksum(bundled.zipPath, bundled.sha256);
+    // extractZip удаляет архив после распаковки, поэтому работаем с копией
+    const zipPath = path.join(tempDir, 'zapret.zip');
+    await fsp.copyFile(bundled.zipPath, zipPath);
+    return await installFromZip(zipPath, bundled.version, tempDir, installBase, null, report);
+  } finally {
+    await removeDirectory(tempDir, false).catch(() => undefined);
+  }
+}
+
+/** Первая установка: сначала встроенный архив, свежую версию потом принесёт автообновление */
+export async function installZapret(
+  installBase: string,
+  onProgress: ProgressCallback
+): Promise<{ installPath: string; version: string }> {
+  const bundled = readBundledZapret();
+  if (bundled) {
+    try {
+      return await installBundledZapret(bundled, installBase, onProgress);
+    } catch {
+      /* архив мог повредить антивирус — пробуем скачать */
+    }
+  }
+  return downloadOfficialZapret(installBase, null, onProgress);
 }
 
 export async function fetchLatestVersion(): Promise<string | null> {

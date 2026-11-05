@@ -35,6 +35,8 @@ export interface BypassWatchdogOptions {
   resolveZapretPath: () => Promise<string | null>;
   resolveStrategy: (root: string) => Promise<string | null>;
   probe: (root: string, strategy: string) => Promise<BypassProbeResult>;
+  /** что именно не открылось при последней проверке */
+  describeProbeFailure?: () => string;
   restartBypass: (root: string, strategy: string) => Promise<void>;
   /** следующий конфиг по рейтингу, кроме отложенных и уже испробованных */
   nextFallbackStrategy: (root: string, tried: string[]) => Promise<string | null>;
@@ -153,13 +155,17 @@ export class BypassWatchdog {
     this.healthFailStreak += 1;
     this.setHealth('degraded');
     if (this.healthFailStreak < 2) {
-      o.onOutput('Проверка не прошла', 'warn');
+      o.onOutput(`${this.probeFailure()} — проверю ещё раз`, 'warn');
       return;
     }
 
     this.healthFailStreak = 0;
     this.emit({ kind: 'blocked', text: 'Сайты перестали открываться', strategy });
     await this.recover('Сайты недоступны');
+  }
+
+  private probeFailure(): string {
+    return this.options.describeProbeFailure?.() || 'Сайты не открылись';
   }
 
   private canRecover(): boolean {
@@ -212,7 +218,7 @@ export class BypassWatchdog {
           return;
         }
         if (result === 'aborted' || result === 'offline') return;
-        o.onOutput('Перезапуск выполнен, проверка не прошла', 'warn');
+        o.onOutput(`Перезапуск не помог. ${this.probeFailure()}`, 'warn');
         // Последний перезапуск не помог — сразу ищем замену, не дожидаясь следующей проверки
         if (this.sameStrategyFailures < restartsBeforeSwitch || !o.autoSwitchEnabled()) return;
       }

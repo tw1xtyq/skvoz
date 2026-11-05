@@ -4,6 +4,7 @@ import {
   fetchLatestRelease,
   getDefaultInstallBase,
   getInstallPath,
+  installZapret,
   type DownloadProgress,
 } from './downloader';
 import { scanForInstallations, type InstallCandidate, type ScanResult } from './scanner';
@@ -62,7 +63,7 @@ export async function runAutonomousBootstrap(
   if (!best) {
     onProgress({
       stage: 'downloading',
-      message: 'Загрузка официального zapret с GitHub...',
+      message: 'Установка zapret...',
       scan,
       selected: null,
       isOfficial: false,
@@ -71,7 +72,7 @@ export async function runAutonomousBootstrap(
     });
 
     try {
-      const download = await downloadOfficialZapret(installBase, null, onDownloadProgress ?? (() => undefined));
+      const download = await installZapret(installBase, onDownloadProgress ?? (() => undefined));
       const ready: BootstrapState = {
         stage: 'ready',
         message: `Установлен zapret ${download.version}`,
@@ -91,7 +92,7 @@ export async function runAutonomousBootstrap(
       onProgress(ready);
       return { path: download.installPath, state: ready };
     } catch (err) {
-      throw new Error(`Zapret не найден и загрузка не удалась: ${err instanceof Error ? err.message : err}`);
+      throw new Error(`Не удалось установить zapret: ${err instanceof Error ? err.message : err}`);
     }
   }
 

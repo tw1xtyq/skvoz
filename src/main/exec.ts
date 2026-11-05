@@ -1,4 +1,5 @@
 import { spawn, type SpawnOptions } from 'child_process';
+import fs from 'fs';
 import type { OutputCallback } from './diagnostics';
 
 function stripAnsi(text: string): string {
@@ -108,17 +109,36 @@ export function runHidden(
   });
 }
 
-export function runDetachedHidden(command: string, args: string[], cwd?: string): Promise<void> {
+/** Запускает процесс отдельно от приложения; вывод идёт в logPath, чтобы было видно причину сбоя. */
+export function runDetachedHidden(
+  command: string,
+  args: string[],
+  cwd: string | undefined,
+  logPath: string
+): Promise<{ exited: Promise<number | null> }> {
   return new Promise((resolve, reject) => {
+    let log: number | 'ignore' = 'ignore';
+    try {
+      log = fs.openSync(logPath, 'w');
+    } catch {
+      /* запуск важнее журнала */
+    }
+    const closeLog = (): void => {
+      if (log !== 'ignore') fs.closeSync(log);
+      log = 'ignore';
+    };
+
     const child = spawn(command, args, {
       cwd,
       windowsHide: true,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', log, log],
       shell: false,
     });
+    const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
 
     child.once('error', (err: NodeJS.ErrnoException) => {
+      closeLog();
       if (err.code === 'EACCES') {
         reject(
           new Error(
@@ -131,8 +151,9 @@ export function runDetachedHidden(command: string, args: string[], cwd?: string)
     });
 
     child.once('spawn', () => {
+      closeLog();
       child.unref();
-      resolve();
+      resolve({ exited });
     });
   });
 }

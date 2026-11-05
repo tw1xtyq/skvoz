@@ -57,6 +57,7 @@ import {
   downloadOfficialZapret,
   fetchLatestRelease,
   getDefaultInstallBase,
+  installZapret,
   unblockZapretInstall,
   type DownloadProgress,
 } from './downloader';
@@ -90,6 +91,7 @@ import {
 } from './zapret-maintenance';
 import { BypassWatchdog, strategyLabel, type WatchdogHealth } from './bypass-watchdog';
 import { tgwsProxy, type TgwsProxyConfig } from './tgws-proxy';
+import { RepeatFilter } from './tgws/server';
 import { amneziaVpn } from './amneziawg';
 import { createWarpVpn, WARP_ENDPOINTS, type WarpGenerateOptions } from './warp-generator';
 import { checkAccess } from './access-check';
@@ -168,7 +170,11 @@ function markBypassExpectedRunning(running: boolean): void {
 function initTgwsProxy(): void {
   tgwsProxy.onLog((level, message) => {
     // по строке на каждое подключение — шум; в журнал только важное
-    if (level !== 'info') sendToolOutput(`[TG] ${message}`, level);
+    if (level === 'info') return;
+    const text = message.replace(/^\[[^\]]+\]\s*/, '');
+    // Telegram повторяет подключения раз в секунду: без фильтра они вытесняли из отчёта всё остальное
+    const { show, skipped } = tgLogRepeats.accept(text);
+    if (show) sendToolOutput(`[TG] ${text}${skipped > 0 ? ` (повторов за минуту: ${skipped})` : ''}`, level);
   });
   tgwsProxy.onStateChange(() => void refreshTrayMenu());
   const tgConfig = tgwsProxy.getConfig();
@@ -247,6 +253,7 @@ const TOOL_LOG_LIMIT = 400;
 const strategyMemory = new StrategyMemory(path.join(app.getPath('userData'), 'strategy-memory.json'));
 const bypassEvents = new BypassEventLog(path.join(app.getPath('userData'), 'bypass-events.json'));
 const toolLog: LogLine[] = [];
+const tgLogRepeats = new RepeatFilter(60_000);
 let currentNetwork: NetworkIdentity = UNKNOWN_NETWORK;
 let networkFingerprint = '';
 let networkTimer: ReturnType<typeof setInterval> | null = null;
@@ -255,7 +262,7 @@ const HEALTH_LABEL: Record<WatchdogHealth, string> = {
   off: 'выключен',
   checking: 'проверяется',
   ok: 'сайты открываются',
-  degraded: 'проверка не прошла',
+  degraded: 'не все сайты открылись',
   recovering: 'восстанавливается',
   down: 'не работает',
 };
@@ -309,6 +316,8 @@ function isBypassAutomationBusy(): boolean {
   return autoPickBestStrategyRunning || backgroundRerank.isRunning || zapretUpdateRunning;
 }
 
+let lastProbeFailedHosts: string[] = [];
+
 const bypassWatchdog = new BypassWatchdog({
   intervalMs: 8_000,
   healthCheckIntervalMs: 30_000,
@@ -328,7 +337,13 @@ const bypassWatchdog = new BypassWatchdog({
     if (!strategy || !status.strategies.includes(strategy)) return null;
     return strategy;
   },
-  probe: (root, strategy) => probeBypassTargets(resolveProbeUrls(root, strategy)),
+  probe: (root, strategy) =>
+    probeBypassTargets(resolveProbeUrls(root, strategy), {
+      onFailed: (hosts) => {
+        lastProbeFailedHosts = hosts;
+      },
+    }),
+  describeProbeFailure: () => (lastProbeFailedHosts.length > 0 ? `Не открылись: ${lastProbeFailedHosts.join(', ')}` : ''),
   restartBypass: async (root, strategy) => {
     await startBypass(root, strategy, (line) => sendToolOutput(line.text, line.level));
   },
@@ -584,6 +599,7 @@ async function saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }
       probeSites: config.probeSites,
       bypassStoppedByUser: config.bypassStoppedByUser,
       tgProxyRunning: tgwsProxy.isRunning(),
+      tgProxyStats: tgwsProxy.getStats(),
       vpnRunning: amneziaVpn.isRunning(),
     },
     zapret: { path: root, running, strategy: config.selectedStrategy, strategies },
@@ -1461,7 +1477,7 @@ async function loadDashboardState(options: { light?: boolean; fresh?: boolean } 
 async function requireZapretPath(): Promise<string> {
   const resolved = await tryResolveZapretPath();
   if (!resolved) {
-    throw new Error('Zapret не найден. Нажмите «Скачать с GitHub» или «Найти на ПК».');
+    throw new Error('Zapret не установлен. Нажмите «Установить zapret» на главной.');
   }
   return resolved;
 }
@@ -2191,7 +2207,11 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('get-process-status', async () => {
-    await getProcessStatus(await requireZapretPath(), (line) => sendToolOutput(line.text, line.level));
+    await getProcessStatus(
+      await requireZapretPath(),
+      (line) => sendToolOutput(line.text, line.level),
+      config.selectedStrategy
+    );
     return { ok: true };
   });
 
@@ -2251,11 +2271,11 @@ function registerIpc(): void {
       /* continue install */
     }
 
-    const result = await downloadOfficialZapret(
-      config.installBase,
-      isValidZapretPath(config.zapretPath) ? config.zapretPath : null,
-      sendDownloadProgress
-    ).catch((error) => {
+    const existing = isValidZapretPath(config.zapretPath) ? config.zapretPath : null;
+    const install = existing
+      ? downloadOfficialZapret(config.installBase, existing, sendDownloadProgress)
+      : installZapret(config.installBase, sendDownloadProgress);
+    const result = await install.catch((error) => {
       rememberToolLog(error instanceof Error ? error.message : String(error), 'error');
       throw error;
     });

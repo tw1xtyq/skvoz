@@ -145,7 +145,7 @@ async function scQueryContains(filter: string): Promise<boolean> {
   }
 }
 
-function isTcpTimestampsEnabled(netshOutput: string): boolean {
+export function isTcpTimestampsEnabled(netshOutput: string): boolean {
   for (const line of netshOutput.split(/\r?\n/)) {
     if (!/(timestamps|rfc\s*1323|метки\s+времени)/i.test(line)) continue;
     if (/:\s*enabled\b/i.test(line)) return true;

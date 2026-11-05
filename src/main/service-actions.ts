@@ -1,8 +1,9 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { assertAdmin } from './admin';
-import type { OutputCallback } from './diagnostics';
+import { isTcpTimestampsEnabled, type OutputCallback } from './diagnostics';
 import {
   assertWinwsRunningAfterLaunch,
   ensureRequiredLists,
@@ -12,7 +13,17 @@ import {
 } from './bypass-prep';
 import { unblockZapretInstall } from './downloader';
 import { ensureUserListFiles } from './user-lists';
-import { runDetachedHidden, runHidden } from './exec';
+import { decodeProcessOutput, runDetachedHidden, runHidden } from './exec';
+import { describeWinwsExit } from './winws-errors';
+
+const WINWS_EARLY_EXIT_MS = 1_500;
+
+/** В файле service.bat пишет mode=all и диапазоны, а Skvoz — просто all */
+export function parseGameFilterMode(content: string): 'disabled' | 'all' | 'tcp' | 'udp' {
+  const text = content.trim().toLowerCase();
+  const mode = text.match(/^mode=(\w+)/m)?.[1] ?? text;
+  return mode === 'all' || mode === 'tcp' || mode === 'udp' ? mode : 'disabled';
+}
 
 function readGameFilterPorts(root: string): { tcp: string; udp: string } {
   const flagFile = path.join(root, 'utils', 'game_filter.enabled');
@@ -20,7 +31,7 @@ function readGameFilterPorts(root: string): { tcp: string; udp: string } {
 
   if (!fs.existsSync(flagFile)) return disabled;
 
-  const mode = fs.readFileSync(flagFile, 'utf8').trim().toLowerCase();
+  const mode = parseGameFilterMode(fs.readFileSync(flagFile, 'utf8'));
   if (mode === 'all') return { tcp: '1024-65535', udp: '1024-65535' };
   if (mode === 'tcp') return { tcp: '1024-65535', udp: '12' };
   if (mode === 'udp') return { tcp: '12', udp: '1024-65535' };
@@ -121,7 +132,7 @@ async function runCmdOutput(command: string, args: string[], timeoutMs = 8_000):
 async function ensureTcpTimestamps(out?: OutputCallback): Promise<void> {
   try {
     const status = await runCmdOutput('netsh', ['interface', 'tcp', 'show', 'global']);
-    if (/timestamps\s*:\s*enabled/i.test(status)) return;
+    if (isTcpTimestampsEnabled(status)) return;
   } catch {
     /* try to enable below */
   }
@@ -161,7 +172,22 @@ export async function startBypassHidden(root: string, strategyFile: string, out?
 
   await ensureWinwsStopped();
   out?.({ text: `Запуск winws.exe (${strategyFile})...`, level: 'info' });
-  await runDetachedHidden(launch.exe, launch.args, path.dirname(launch.exe));
+  const logPath = path.join(os.tmpdir(), 'skvoz-winws.log');
+  const { exited } = await runDetachedHidden(launch.exe, launch.args, path.dirname(launch.exe), logPath);
+  // процесс виден в списке и тогда, когда уже падает на загрузке драйвера
+  const earlyExit = await Promise.race([
+    exited.then((code) => ({ code })),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), WINWS_EARLY_EXIT_MS)),
+  ]);
+  if (earlyExit) {
+    let output = '';
+    try {
+      output = decodeProcessOutput(fs.readFileSync(logPath));
+    } catch {
+      /* журнал недоступен */
+    }
+    throw new Error(describeWinwsExit(earlyExit.code, output));
+  }
   await assertWinwsRunningAfterLaunch();
   out?.({ text: '[OK] Обход запущен', level: 'success' });
 }

@@ -1,6 +1,7 @@
 // Готовит сторонние компоненты, которые едут внутри Skvoz (vendor/ → resources/):
 //  - AmneziaWG: amneziawg.exe, awg.exe и wintun.dll из официального MSI, без установки;
-//  - wgcf: запасной способ регистрации Cloudflare WARP.
+//  - wgcf: запасной способ регистрации Cloudflare WARP;
+//  - zapret: ZIP без изменений — первая установка не зависит от доступа к GitHub.
 // Берёт последние релизы и сверяет SHA-256, который публикует GitHub. Если GitHub недоступен,
 // использует закреплённые версии. SKVOZ_VENDOR_PINNED=1 — всегда закреплённые.
 const { spawnSync } = require('child_process');
@@ -31,6 +32,16 @@ const COMPONENTS = {
       version: '2.3.1',
       url: 'https://github.com/ViRb3/wgcf/releases/download/v2.3.1/wgcf_2.3.1_windows_amd64.exe',
       sha256: 'e222fd9443d7cb3264d825a3e86967797fc9c938507c5d93e3cc21e4aed11dcc',
+    },
+  },
+  zapret: {
+    repo: 'Flowseal/zapret-discord-youtube',
+    asset: /^zapret-discord-youtube-[\d.]+[a-z]?\.zip$/,
+    files: ['zapret.zip', 'SHA256'],
+    pinned: {
+      version: '1.10.4',
+      url: 'https://github.com/Flowseal/zapret-discord-youtube/releases/download/1.10.4/zapret-discord-youtube-1.10.4.zip',
+      sha256: '291af673bd0238506f9548e0e94ca0abf244000f4c9a06960544fb01c5f97b34',
     },
   },
 };
@@ -114,6 +125,7 @@ async function prepare(name, component) {
   fs.mkdirSync(dir, { recursive: true });
   if (name === 'amneziawg') extractMsi(data, component.files, dir);
   else fs.writeFileSync(path.join(dir, component.files[0]), data);
+  if (name === 'zapret') fs.writeFileSync(path.join(dir, 'SHA256'), `${release.sha256}\n`);
   fs.writeFileSync(path.join(dir, 'VERSION'), `${release.version}\n`);
   console.log(`${name} ${release.version} (${release.source} версия) готов в vendor/${name}`);
 }

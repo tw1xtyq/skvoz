@@ -960,9 +960,12 @@ function updateControls(status: StatusPayload | null): void {
   els.backgroundRerankToggle.disabled = pickLocked;
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
-  els.btnQuickBypass.disabled = pickLocked || busy || (running ? !hasPath : !canStart);
-  els.btnQuickBypass.textContent = running ? 'Остановить' : 'Включить';
+  els.btnQuickBypass.disabled = pickLocked || busy || (hasPath && (running ? false : !canStart));
+  els.btnQuickBypass.textContent = !hasPath ? 'Установить zapret' : running ? 'Остановить' : 'Включить';
   els.btnBypassDeckToggle.disabled = els.btnQuickBypass.disabled;
+  document.querySelectorAll<HTMLButtonElement>('[data-install-zapret]').forEach((button) => {
+    button.disabled = pickLocked || busy;
+  });
   els.btnBypassDeckToggle.textContent = running ? 'Остановить' : 'Запустить';
   els.btnBypassDeckToggle.classList.toggle('btn-glow', !running);
   els.btnBypassDeckToggle.classList.toggle('btn-soft', running);
@@ -979,7 +982,7 @@ function updateQuickBypass(status: StatusPayload | null): void {
   els.quickBypassCard.classList.toggle('is-live', running);
   els.quickBypassCard.classList.toggle('is-unavailable', !ready);
   els.quickBypassDot.classList.toggle('is-live', running);
-  els.quickBypassText.textContent = running ? 'Защита включена' : ready ? 'Защита выключена' : 'Zapret не найден';
+  els.quickBypassText.textContent = running ? 'Защита включена' : ready ? 'Защита выключена' : 'Zapret не установлен';
   const strategy = status?.selectedStrategy?.replace(/\.bat$/i, '');
   els.quickBypassMeta.textContent = ready && strategy ? `Конфиг: ${strategy}` : '';
 
@@ -1263,7 +1266,8 @@ function showOfficialWarning(status: StatusPayload, bootstrap?: BootstrapState |
   const warnings = [...(bootstrap?.warnings ?? []), ...status.officialWarnings];
   const unofficial = !status.isOfficial || warnings.some((w) => w.toLowerCase().includes('неофици'));
 
-  if (!unofficial && bootstrap?.autoFixed !== true) {
+  // пока zapret не установлен, предупреждать не о чем
+  if (!status.pathsValid || (!unofficial && bootstrap?.autoFixed !== true)) {
     els.officialWarning.classList.add('hidden');
     return;
   }
@@ -1275,12 +1279,12 @@ function showOfficialWarning(status: StatusPayload, bootstrap?: BootstrapState |
 }
 
 function setDownloadingUi(active: boolean, message?: string): void {
-  els.emptyStateTitle.textContent = active ? 'Загрузка zapret...' : 'Zapret не найден';
+  els.emptyStateTitle.textContent = active ? 'Установка zapret...' : 'Zapret не установлен';
   els.emptyStateHint.textContent =
     message ??
     (active
-      ? 'Скачиваем официальную сборку с GitHub. Это может занять минуту.'
-      : 'Скачайте zapret или укажите папку — дальше всё из одного окна.');
+      ? 'Это может занять минуту.'
+      : 'Нажмите «Установить zapret». Если он уже есть на компьютере, найдите его или укажите папку.');
   els.emptyStateActions.classList.toggle('hidden', active);
   setHeroLoading(active);
   els.btnDownload.disabled = active || busy;
@@ -1621,7 +1625,7 @@ function renderStatus(status: StatusPayload, configPath: string): void {
   els.statusBadge.classList.toggle('running', running);
   els.statusBadge.classList.toggle('warning', !running && !(status.pathsValid && status.isOfficial));
   els.statusBadge.title = !status.pathsValid
-    ? 'Zapret не найден — открыть страницу обхода'
+    ? 'Zapret не установлен — открыть страницу обхода'
     : !status.isOfficial
       ? 'Неофициальная сборка zapret — открыть страницу обхода'
       : running
@@ -1840,6 +1844,8 @@ function finishBootstrap(state: BootstrapState): void {
     setGlobalLoad({ visible: false });
     setDownloadingUi(false);
     setHeroLoading(false);
+    setStatusLoading(false);
+    els.statusText.textContent = 'Обход';
   }
   void refreshStatus().then(() => {
     if (state.stage === 'ready' || state.autoFixed) {
@@ -1901,19 +1907,19 @@ async function downloadZapret(): Promise<void> {
   setDownloadingUi(true);
   setGlobalLoad({
     visible: true,
-    title: 'Загрузка zapret',
-    message: 'Подключение к GitHub...',
+    title: 'Установка zapret',
+    message: 'Подготовка...',
     percent: 4,
     stage: 'fetch',
   });
-  log('Загрузка официального zapret...', 'info');
+  log('Установка zapret...', 'info');
   try {
     const result = await api.downloadZapret();
     log(`Установлен zapret ${result.version}`, 'success');
     await refreshStatus();
     void loadUserLists(true);
   } catch (err) {
-    reportFailure(err, 'Не удалось скачать zapret');
+    reportFailure(err, 'Не удалось установить zapret');
     showBootstrapBanner(formatUserError(err), true);
     setDownloadingUi(false);
     setGlobalLoad({
@@ -2504,7 +2510,13 @@ for (const button of settingsTabButtons()) {
 }
 restoreSettingsTab();
 
-els.btnQuickBypass.addEventListener('click', () => els.btnToggle.click());
+els.btnQuickBypass.addEventListener('click', () => {
+  if (currentStatus?.pathsValid) els.btnToggle.click();
+  else void downloadZapret();
+});
+document.querySelectorAll<HTMLButtonElement>('[data-install-zapret]').forEach((button) => {
+  button.addEventListener('click', () => void downloadZapret());
+});
 els.btnBypassDeckToggle.addEventListener('click', () => els.btnToggle.click());
 els.btnVpnDeckToggle.addEventListener('click', () => els.btnQuickVpn.click());
 els.btnQuickTg.addEventListener('click', () => els.btnTgToggle.click());
