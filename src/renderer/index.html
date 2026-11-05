@@ -43,11 +43,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
         <b>Настройки</b>
       </button>
-      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Диагностика, журнал и удаление">
+      <button class="side-nav-btn" id="navTools" type="button" data-view="tools" data-hotkey="6" title="Ctrl+6 · Помощь: диагностика, журнал и удаление">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/><path d="m8 10 2.5 2L8 14M12.5 14H16"/></svg>
-        <b>Сервис</b>
+        <b>Помощь</b>
       </button>
-      <button class="side-nav-btn" id="navAbout" type="button" data-view="about" data-hotkey="7" title="Ctrl+7 · О программе, авторы и лицензии">
+      <button class="side-nav-btn" id="navAbout" type="button" data-view="about" data-hotkey="7" title="Ctrl+7 · О Skvoz, авторы и лицензии">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></svg>
         <b>О Skvoz</b>
       </button>
@@ -77,8 +77,8 @@
     <div class="notice notice-danger hidden" id="officialWarning"></div>
     <div class="notice notice-warn hidden" id="adminBanner">
       <strong>Нет прав администратора</strong>
-      <span>Для запуска обхода нужны права администратора</span>
-      <button class="btn btn-xs btn-glow" id="btnRestartAdmin" type="button">Перезапуск от админа</button>
+      <span>Без них обход не включится</span>
+      <button class="btn btn-xs btn-glow" id="btnRestartAdmin" type="button">Перезапустить</button>
     </div>
     <div class="notice notice-info hidden" id="bootstrapBanner"></div>
     <div class="notice notice-accent hidden" id="appUpdateBanner">
@@ -116,7 +116,7 @@
             </span>
             <span class="quick-control-dot" id="quickBypassDot" aria-hidden="true"></span>
           </div>
-          <div class="quick-control-copy"><strong>Zapret</strong><span id="quickBypassText">Проверяем статус…</span><small class="quick-control-meta" id="quickBypassMeta"></small></div>
+          <div class="quick-control-copy"><strong>Обход</strong><small class="quick-control-for">YouTube и Discord без VPN</small><span id="quickBypassText">Проверяем статус…</span><small class="quick-control-meta" id="quickBypassMeta"></small></div>
           <button class="btn btn-soft" id="btnQuickBypass" type="button">Включить</button>
         </div>
         <div class="quick-control-item" id="quickTgCard">
@@ -126,7 +126,7 @@
             </span>
             <span class="quick-control-dot" id="quickTgDot" aria-hidden="true"></span>
           </div>
-          <div class="quick-control-copy"><strong>TG WS Proxy</strong><span id="quickTgText">Проверяем статус…</span><small class="quick-control-meta" id="quickTgMeta"></small></div>
+          <div class="quick-control-copy"><strong>Telegram-прокси</strong><small class="quick-control-for">Только Telegram</small><span id="quickTgText">Проверяем статус…</span><small class="quick-control-meta" id="quickTgMeta"></small></div>
           <button class="btn btn-soft" id="btnQuickTg" type="button">Включить</button>
         </div>
         <div class="quick-control-item" id="quickVpnCard">
@@ -136,7 +136,7 @@
             </span>
             <span class="quick-control-dot" id="quickVpnDot" aria-hidden="true"></span>
           </div>
-          <div class="quick-control-copy"><strong>VPN</strong><span id="quickVpnText">Проверяем статус…</span><small class="quick-control-meta" id="quickVpnMeta"></small></div>
+          <div class="quick-control-copy"><strong>VPN</strong><small class="quick-control-for">Весь интернет через сервер</small><span id="quickVpnText">Проверяем статус…</span><small class="quick-control-meta" id="quickVpnMeta"></small></div>
           <button class="btn btn-soft" id="btnQuickVpn" type="button">Включить</button>
         </div>
       </div>
@@ -209,7 +209,7 @@
             </div>
           </div>
           <div class="tg-deck-actions">
-            <button class="btn btn-glow" id="btnBypassDeckToggle" type="button">Запустить</button>
+            <button class="btn btn-glow" id="btnBypassDeckToggle" type="button">Включить</button>
           </div>
         </div>
       </section>
@@ -233,12 +233,19 @@
         <div class="config-divider" aria-hidden="true"></div>
 
         <div class="config-picker runtime-lock-group" id="configTestsGroup">
-          <p class="hint config-picker-hint">«Подобрать» останавливается на первом конфиге, который открыл всё. Если обход запущен, он перезапустится с найденным конфигом.</p>
+          <p class="hint config-picker-hint">Конфиг — это набор настроек обхода. У разных провайдеров работают разные. Не знаете, какой выбрать? Нажмите «Подобрать автоматически»: Skvoz остановится на первом, который открыл всё.</p>
           <div class="test-actions">
             <button class="btn btn-glow" id="btnFindBest" type="button">Подобрать автоматически</button>
-            <button class="btn btn-soft" id="btnFullCheck" type="button">Проверить все</button>
-            <button class="btn btn-soft" id="btnTests" type="button">Только текущий</button>
           </div>
+          <details class="disclosure config-more">
+            <summary>Другие проверки</summary>
+            <div class="disclosure-body">
+              <div class="test-actions">
+                <button class="btn btn-soft" id="btnFullCheck" type="button">Проверить все конфиги</button>
+                <button class="btn btn-soft" id="btnTests" type="button">Проверить текущий</button>
+              </div>
+            </div>
+          </details>
           <div class="test-progress load-inline hidden" id="testProgressWrap">
             <div class="test-progress-head">
               <span class="load-inline-label" id="testProgressText">—</span>
@@ -248,13 +255,15 @@
           </div>
           <div class="test-results hidden" id="testResults"></div>
         </div>
-        <p class="runtime-lock-hint hidden" id="configLockHint">Остановите обход, чтобы сменить конфиг вручную, или запустите подбор — он перезапустит обход сам</p>
+        <p class="runtime-lock-hint hidden" id="configLockHint">Выключите обход, чтобы сменить конфиг вручную, или запустите подбор — он перезапустит обход сам</p>
       </section>
 
       <section class="glass-card command-deck" id="mainPanel">
+        <details class="disclosure">
+        <summary>Версия и папка zapret</summary>
+        <div class="disclosure-body">
         <div class="command-layout">
           <div class="command-main">
-            <span class="eyebrow folder-eyebrow">Установка zapret</span>
             <div class="meta-row">
               <span class="pill" id="officialBadge">—</span>
               <span class="pill pill-muted" id="versionLine">—</span>
@@ -264,11 +273,11 @@
               <code class="path-value" id="zapretPath">—</code>
             </div>
             <div class="chip-row runtime-lock-group" id="pathActionsGroup">
-              <button class="chip-btn" id="btnRescan" type="button">Пересканировать</button>
-              <button class="chip-btn" id="btnChangePath" type="button">Сменить путь</button>
+              <button class="chip-btn" id="btnRescan" type="button">Найти заново</button>
+              <button class="chip-btn" id="btnChangePath" type="button">Указать папку</button>
               <button class="chip-btn" type="button" data-goto="settings" data-settings-tab="setUpdates">Обновления</button>
             </div>
-            <p class="runtime-lock-hint hidden" id="pathLockHint">Остановите обход, чтобы менять папку</p>
+            <p class="runtime-lock-hint hidden" id="pathLockHint">Выключите обход, чтобы менять папку</p>
           </div>
 
           <div class="power-zone hidden" id="powerZone">
@@ -284,6 +293,8 @@
             <span class="power-hint">Старт / стоп</span>
           </div>
         </div>
+        </div>
+        </details>
       </section>
 
       <div class="page-missing when-missing">
@@ -300,36 +311,32 @@
             <div class="tg-deck-status">
               <span class="tg-status-ring" id="tgStatusDot" aria-hidden="true"><span class="tg-status-dot"></span></span>
               <div class="tg-deck-copy">
-                <strong class="tg-deck-title" id="tgDeckTitle">Telegram-прокси остановлен</strong>
-                <p class="tg-deck-meta" id="tgDeckMeta">Подключение MTProto→WebSocket через локальный прокси</p>
+                <strong class="tg-deck-title" id="tgDeckTitle">Telegram-прокси выключен</strong>
+                <p class="tg-deck-meta" id="tgDeckMeta">—</p>
               </div>
             </div>
             <div class="tg-deck-stats">
-              <div class="tg-stat-row"><span class="tg-stat" id="tgStatTotal">0</span><span class="tg-stat-label">Всего</span></div>
-              <div class="tg-stat-row"><span class="tg-stat" id="tgStatActive">0</span><span class="tg-stat-label">Активно</span></div>
-              <div class="tg-stat-row"><span class="tg-stat" id="tgStatWs">0</span><span class="tg-stat-label">WS</span></div>
-              <div class="tg-stat-row"><span class="tg-stat" id="tgStatTcp">0</span><span class="tg-stat-label">TCP</span></div>
+              <div class="tg-stat-row"><span class="tg-stat" id="tgStatTotal">0</span><span class="tg-stat-label">Подключений</span></div>
+              <div class="tg-stat-row"><span class="tg-stat" id="tgStatActive">0</span><span class="tg-stat-label">Сейчас</span></div>
               <div class="tg-stat-row"><span class="tg-stat" id="tgStatBad">0</span><span class="tg-stat-label">Ошибки</span></div>
             </div>
           </div>
           <div class="tg-deck-actions">
-            <button class="btn btn-glow" id="btnTgToggle" type="button">Запустить</button>
+            <button class="btn btn-glow" id="btnTgToggle" type="button">Включить</button>
+            <button class="btn btn-soft hidden" id="btnTgOpenTg" type="button">Открыть в Telegram</button>
             <button class="hidden" id="btnTgDisconnect" type="button">Отключить</button>
           </div>
         </div>
       </section>
 
       <section class="glass-card tg-form">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg></span>
-            <h3>Подключение</h3>
-          </div>
-          <p class="card-hint">Адрес локального прокси и секрет для клиента Telegram</p>
-        </header>
+        <details class="disclosure">
+        <summary>Настройки подключения</summary>
+        <div class="disclosure-body">
+        <p class="card-hint">Обычно менять ничего не нужно. После изменений добавьте прокси в Telegram заново</p>
         <div class="tg-grid">
           <div class="tg-field">
-            <label class="field-label" for="tgHost">Хост</label>
+            <label class="field-label" for="tgHost">Адрес</label>
             <input id="tgHost" class="tg-input" type="text" value="127.0.0.1">
           </div>
           <div class="tg-field">
@@ -337,7 +344,7 @@
             <input id="tgPort" class="tg-input" type="number" min="1" max="65535" value="4443">
           </div>
           <div class="tg-field tg-field-wide">
-            <label class="field-label" for="tgSecret">Секрет (hex)</label>
+            <label class="field-label" for="tgSecret">Секрет</label>
             <div class="tg-input-row">
               <input id="tgSecret" class="tg-input" type="text" value="" placeholder="32 hex-символа (16 байт)">
               <button class="btn btn-soft btn-sm" id="btnTgGenSecret" type="button">Сгенерировать</button>
@@ -348,7 +355,6 @@
             <div class="tg-input-row">
               <input id="tgProxyLink" class="tg-input" type="text" readonly>
               <button class="btn btn-soft btn-sm" id="btnTgCopyLink" type="button">Копировать</button>
-              <button class="btn btn-soft btn-sm" id="btnTgOpenTg" type="button">Открыть в Telegram</button>
             </div>
           </div>
         </div>
@@ -357,6 +363,12 @@
             <button class="btn btn-glow btn-sm" id="btnTgSaveConfig" type="button">Сохранить</button>
           </div>
         </div>
+        <dl class="kv-list">
+          <div class="kv-row"><dt>Подключений через WebSocket</dt><dd id="tgStatWs">0</dd></div>
+          <div class="kv-row"><dt>Подключений напрямую (TCP)</dt><dd id="tgStatTcp">0</dd></div>
+        </dl>
+        </div>
+        </details>
       </section>
     </section>
 
@@ -436,7 +448,7 @@
         <header class="card-head card-head-stack">
           <div class="card-head-row">
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20.5H7z"/><path d="M14 3.5v4h4M10 12h5M10 16h5"/></svg></span>
-            <h3>Конфиг AmneziaWG</h3>
+            <h3>Конфиг VPN</h3>
           </div>
           <p class="card-hint">Текущий конфиг или свой .conf от VPN-сервера. Всё работает внутри Skvoz — ставить AmneziaWG не нужно</p>
         </header>
@@ -749,28 +761,28 @@
       </section>
     </section>
 
-    <!-- Сервис -->
+    <!-- Помощь -->
     <section class="page" data-page="tools">
       <section class="glass-card bento-card needs-zapret">
         <header class="card-head card-head-stack">
           <div class="card-head-row">
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17v3h3l5.3-5.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></span>
-            <h3>Инструменты</h3>
+            <h3>Проверка и отчёт</h3>
           </div>
-          <p class="card-hint">Проверка соединения, состояние winws и отчёт для баг-репорта</p>
+          <p class="card-hint">Начните с диагностики. Если она не помогла, сохраните отчёт и приложите его к сообщению о проблеме</p>
         </header>
         <div class="tool-grid">
           <div class="tool-cell">
             <button class="btn btn-soft btn-sm" id="btnDiagnostics" type="button">Диагностика</button>
-            <p class="tool-hint">Интернет, DNS, curl и конфликты</p>
+            <p class="tool-hint">Службы Windows, прокси, файлы и конфликтующие программы</p>
           </div>
           <div class="tool-cell">
             <button class="btn btn-soft btn-sm" id="btnProcessStatus" type="button">Статус</button>
-            <p class="tool-hint">Запущен ли winws.exe</p>
+            <p class="tool-hint">Работают ли обход и его службы</p>
           </div>
           <div class="tool-cell">
             <button class="btn btn-soft btn-sm" id="btnSaveReport" type="button">Отчёт</button>
-            <p class="tool-hint">Файл для баг-репорта, без личных данных</p>
+            <p class="tool-hint">Файл для сообщения о проблеме. Имя пользователя в нём скрыто</p>
           </div>
         </div>
       </section>
@@ -807,7 +819,7 @@
           </div>
           <div class="tool-cell tool-cell-danger runtime-lock-group" id="fullRemoveGroup">
             <button class="btn btn-danger btn-sm" id="btnFullRemove" type="button">Удалить с ПК</button>
-            <p class="tool-hint">Стоп, очистка и удаление папок</p>
+            <p class="tool-hint">Выключить обход и удалить папки zapret</p>
           </div>
         </div>
       </section>
@@ -820,7 +832,7 @@
         <header class="card-head card-head-stack">
           <div class="card-head-row">
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
-            <h3>О программе</h3>
+            <h3>О Skvoz</h3>
           </div>
           <p class="card-hint" id="appVersionLine">Skvoz v—</p>
         </header>

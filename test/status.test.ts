@@ -3,13 +3,42 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { consumeFreshInstallMarker, FRESH_INSTALL_MARKER } from '../src/main/autonomous';
 import { probeBypassTargets } from '../src/main/bypass-health';
 import { isTcpTimestampsEnabled, parseScState } from '../src/main/diagnostics';
 import { readBundledZapret } from '../src/main/downloader';
 import { runDetachedHidden } from '../src/main/exec';
+import { dropMissingInstalls, verifyInstallation } from '../src/main/scanner';
 import { parseGameFilterMode } from '../src/main/service-actions';
 import { isCdnDc, RepeatFilter, wsRoutes } from '../src/main/tgws/server';
 import { describeWinwsExit } from '../src/main/winws-errors';
+
+test('метка новой установки срабатывает один раз', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skvoz-fresh-'));
+  try {
+    assert.equal(consumeFreshInstallMarker(dir), false);
+    fs.writeFileSync(path.join(dir, FRESH_INSTALL_MARKER), '');
+    assert.equal(consumeFreshInstallMarker(dir), true);
+    assert.equal(consumeFreshInstallMarker(dir), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('папка без winws.exe не считается установкой zapret', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skvoz-scan-'));
+  try {
+    const root = path.join(dir, 'zapret-discord-youtube-1.0.0');
+    fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'bin', 'winws.exe'), '');
+    assert.equal(dropMissingInstalls([verifyInstallation(root, 'windows-service')]).length, 1);
+
+    fs.rmSync(path.join(root, 'bin', 'winws.exe'));
+    assert.equal(dropMissingInstalls([verifyInstallation(root, 'windows-service')]).length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('состояние службы читается и из русского вывода sc', () => {
   const output = `

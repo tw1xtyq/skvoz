@@ -18,7 +18,7 @@ import os from 'os';
 import { loadAppIcon } from './icons';
 import fs from 'fs';
 import path from 'path';
-import { runAutonomousBootstrap, type BootstrapState } from './autonomous';
+import { consumeFreshInstallMarker, runAutonomousBootstrap, type BootstrapState } from './autonomous';
 import { scanForInstallations, verifyInstallation } from './scanner';
 import { isWindowsAdmin, restartAsAdmin } from './admin';
 import { applyLaunchAtStartup, isLaunchAtStartupEnabled, isStartupLaunch, STARTUP_LAUNCH_ARG, syncLaunchAtStartup, UPDATED_LAUNCH_ARG } from './autostart';
@@ -660,6 +660,11 @@ function stopBypassAutomation(): void {
 }
 
 let config = loadConfig();
+// Настройки переживают удаление Skvoz. Новая установка отменяет прежний отказ от zapret
+if (consumeFreshInstallMarker(path.dirname(process.execPath)) && config.skipAutoBootstrap) {
+  config.skipAutoBootstrap = false;
+  saveConfig(config);
+}
 
 const WINDOW_BACKGROUND = '#06070c';
 

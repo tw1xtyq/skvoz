@@ -961,12 +961,12 @@ function updateControls(status: StatusPayload | null): void {
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
   els.btnQuickBypass.disabled = pickLocked || busy || (hasPath && (running ? false : !canStart));
-  els.btnQuickBypass.textContent = !hasPath ? 'Установить zapret' : running ? 'Остановить' : 'Включить';
+  els.btnQuickBypass.textContent = !hasPath ? 'Установить zapret' : running ? 'Выключить' : 'Включить';
   els.btnBypassDeckToggle.disabled = els.btnQuickBypass.disabled;
   document.querySelectorAll<HTMLButtonElement>('[data-install-zapret]').forEach((button) => {
     button.disabled = pickLocked || busy;
   });
-  els.btnBypassDeckToggle.textContent = running ? 'Остановить' : 'Запустить';
+  els.btnBypassDeckToggle.textContent = running ? 'Выключить' : 'Включить';
   els.btnBypassDeckToggle.classList.toggle('btn-glow', !running);
   els.btnBypassDeckToggle.classList.toggle('btn-soft', running);
   els.btnQuickTg.disabled = pickLocked || busy;
@@ -982,7 +982,7 @@ function updateQuickBypass(status: StatusPayload | null): void {
   els.quickBypassCard.classList.toggle('is-live', running);
   els.quickBypassCard.classList.toggle('is-unavailable', !ready);
   els.quickBypassDot.classList.toggle('is-live', running);
-  els.quickBypassText.textContent = running ? 'Защита включена' : ready ? 'Защита выключена' : 'Zapret не установлен';
+  els.quickBypassText.textContent = running ? 'Включён' : ready ? 'Выключен' : 'Zapret не установлен';
   const strategy = status?.selectedStrategy?.replace(/\.bat$/i, '');
   els.quickBypassMeta.textContent = ready && strategy ? `Конфиг: ${strategy}` : '';
 
@@ -991,7 +991,7 @@ function updateQuickBypass(status: StatusPayload | null): void {
   els.bypassDeckMeta.textContent = running
     ? `Конфиг: ${strategy ?? '—'}`
     : strategy
-      ? `Запустится с конфигом ${strategy}`
+      ? `Включится с конфигом ${strategy}`
       : 'Выберите конфиг ниже';
 }
 
@@ -2397,13 +2397,13 @@ els.btnRestartAdmin?.addEventListener('click', () => {
 type AppView = 'home' | 'bypass' | 'telegram' | 'vpn' | 'settings' | 'tools' | 'about';
 
 const APP_VIEW_TITLES: Record<AppView, [string, string]> = {
-  home: ['Главная', 'Zapret, Telegram proxy и VPN в одном окне'],
-  bypass: ['Обход', 'Запуск zapret и выбор конфига'],
-  telegram: ['Telegram', 'Локальный MTProto → WebSocket прокси'],
-  vpn: ['VPN', 'AmneziaWG прямо из Skvoz'],
+  home: ['Главная', 'Что включено и что открывается прямо сейчас'],
+  bypass: ['Обход', 'YouTube и Discord без VPN с помощью zapret'],
+  telegram: ['Telegram', 'Прокси на этом компьютере, только для Telegram'],
+  vpn: ['VPN', 'Весь интернет через VPN-сервер'],
   settings: ['Настройки', 'Запуск, автоматика обхода, фильтры и обновления'],
-  tools: ['Сервис', 'Диагностика, журнал и удаление'],
-  about: ['О программе', 'Версия, ссылки, авторы и лицензии'],
+  tools: ['Помощь', 'Если что-то не работает: диагностика, журнал и удаление'],
+  about: ['О Skvoz', 'Версия, ссылки, авторы и лицензии'],
 };
 
 function moveNavIndicator(): void {
@@ -2625,6 +2625,39 @@ window.setTimeout(() => {
 
 // ── Telegram proxy tab ──────────────────────────────────────────────────────
 
+/** Прокси добавляют в Telegram один раз, потом его достаточно включать */
+function tgLinkAdded(): boolean {
+  try {
+    return localStorage.getItem('skvoz-tg-link-added') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setTgLinkAdded(added: boolean): void {
+  try {
+    if (added) localStorage.setItem('skvoz-tg-link-added', '1');
+    else localStorage.removeItem('skvoz-tg-link-added');
+  } catch {
+    /* ignore */
+  }
+}
+
+async function openTgLink(): Promise<void> {
+  const link = els.tgProxyLink.value.trim();
+  if (!link) {
+    toast('Ссылка прокси пуста', 'info');
+    return;
+  }
+  try {
+    await api.openExternal(link);
+    setTgLinkAdded(true);
+    void loadTgwsState();
+  } catch (err) {
+    reportFailure(err, 'Не удалось открыть Telegram');
+  }
+}
+
 async function loadTgwsState(): Promise<void> {
   try {
     const state = await api.tgwsStatus();
@@ -2633,12 +2666,14 @@ async function loadTgwsState(): Promise<void> {
     tgwsStats = state.stats;
 
     // Deck title / meta / dot
-    els.tgDeckTitle.textContent = tgwsRunning
-      ? `Работает на ${tgwsConfig.host}:${tgwsConfig.port}`
-      : 'Telegram-прокси остановлен';
+    const linkAdded = tgLinkAdded();
+    const startLabel = linkAdded ? 'Включить' : 'Подключить Telegram';
+    els.tgDeckTitle.textContent = tgwsRunning ? 'Telegram-прокси включён' : 'Telegram-прокси выключен';
     els.tgDeckMeta.textContent = tgwsRunning
-      ? 'Подключение MTProto→WebSocket через локальный прокси'
-      : 'Нажмите «Запустить», потом «Открыть в Telegram»';
+      ? 'Telegram не подключается? Нажмите «Открыть в Telegram» и добавьте прокси'
+      : linkAdded
+        ? 'Прокси уже добавлен в Telegram, осталось его включить'
+        : 'Нажмите кнопку: прокси включится, а Telegram предложит его добавить';
     els.tgStatusDot.classList.toggle('is-live', tgwsRunning);
     els.statusTg.classList.toggle('running', tgwsRunning);
     els.statusTg.title = tgwsRunning ? 'Telegram-прокси работает' : 'Telegram-прокси выключен';
@@ -2651,20 +2686,19 @@ async function loadTgwsState(): Promise<void> {
     els.tgStatBad.textContent = String(tgwsStats.bad);
 
     // Buttons
-    els.btnTgToggle.textContent = tgwsRunning ? 'Остановить' : 'Запустить';
+    els.btnTgToggle.textContent = tgwsRunning ? 'Выключить' : startLabel;
+    els.btnTgOpenTg.classList.toggle('hidden', !tgwsRunning);
     els.btnTgToggle.classList.toggle('btn-glow', !tgwsRunning);
     els.btnTgToggle.classList.toggle('btn-soft', tgwsRunning);
     els.quickTgCard.classList.toggle('is-live', tgwsRunning);
     els.quickTgDot.classList.toggle('is-live', tgwsRunning);
-    els.quickTgText.textContent = tgwsRunning
-      ? `Работает на ${tgwsConfig.host}:${tgwsConfig.port}`
-      : 'Прокси выключен';
+    els.quickTgText.textContent = tgwsRunning ? 'Включён' : 'Выключен';
     els.quickTgMeta.textContent = tgwsRunning
-      ? `Подключений: ${tgwsStats.active} активных · ${tgwsStats.total} всего`
+      ? `Подключений сейчас: ${tgwsStats.active}`
       : tgwsConfig.autostart
         ? 'Запускается вместе с приложением'
         : '';
-    els.btnQuickTg.textContent = tgwsRunning ? 'Остановить' : 'Включить';
+    els.btnQuickTg.textContent = tgwsRunning ? 'Выключить' : startLabel;
     els.btnQuickTg.disabled = busy;
     els.btnTgToggle.disabled = busy;
 
@@ -2709,12 +2743,13 @@ els.btnTgToggle.addEventListener('click', async () => {
   try {
     if (tgwsRunning) {
       await api.tgwsStop();
-      toast('Прокси остановлен', 'info');
+      toast('Прокси выключен', 'info');
     } else {
       await api.tgwsStart();
-      toast('Прокси запущен', 'success');
+      toast('Прокси включён', 'success');
     }
     await loadTgwsState();
+    if (tgwsRunning && !tgLinkAdded()) await openTgLink();
   } catch (err) {
     reportFailure(err, 'Ошибка управления прокси');
   } finally {
@@ -2755,18 +2790,7 @@ els.btnTgCopyLink.addEventListener('click', async () => {
   }
 });
 
-els.btnTgOpenTg.addEventListener('click', async () => {
-  const link = els.tgProxyLink.value.trim();
-  if (!link) {
-    toast('Ссылка прокси пуста', 'info');
-    return;
-  }
-  try {
-    await api.openExternal(link);
-  } catch (err) {
-    reportFailure(err, 'Ошибка открытия ссылки');
-  }
-});
+els.btnTgOpenTg.addEventListener('click', () => void openTgLink());
 
 els.tgAutostart.addEventListener('change', () => {
   const enabled = els.tgAutostart.checked;
@@ -2817,7 +2841,12 @@ els.btnTgSaveConfig.addEventListener('click', async () => {
       host: els.tgHost.value.trim() || '127.0.0.1',
     };
     if (secretVal) updates.secretHex = secretVal;
+    const linkChanged =
+      updates.port !== tgwsConfig?.port ||
+      updates.host !== tgwsConfig?.host ||
+      (!!secretVal && secretVal !== tgwsConfig?.secretHex);
     await api.tgwsSetConfig(updates);
+    if (linkChanged) setTgLinkAdded(false);
     tgConfigDirty = false;
     toast('Конфигурация сохранена', 'success');
     await loadTgwsState();
@@ -2905,18 +2934,21 @@ function renderVpnState(state: VpnState): void {
     : running
       ? stale
         ? 'Ждём ответа сервера'
-        : 'VPN включён'
+        : 'Включён'
       : configured
-        ? 'VPN выключен'
-        : 'Нужен конфиг AmneziaWG';
+        ? 'Выключен'
+        : 'Ещё не настроен';
   els.quickVpnMeta.textContent = running
     ? `${summary?.endpoint ?? ''} · ↓ ${formatTraffic(state.rxBytes)} ↑ ${formatTraffic(state.txBytes)}`
     : configured && state.autostart
       ? 'Подключается вместе с приложением'
       : '';
-  els.btnQuickVpn.textContent = running ? 'Остановить' : configured ? 'Включить' : 'Создать VPN';
+  els.btnQuickVpn.textContent = running ? 'Выключить' : configured ? 'Включить' : 'Создать VPN';
   els.btnQuickVpn.disabled = strategyPickActive || vpnBusy;
-  els.btnVpnDeckToggle.textContent = running ? 'Отключить' : configured ? 'Включить' : 'Создать VPN';
+  els.btnVpnDeckToggle.textContent = running ? 'Выключить' : 'Включить';
+  // без конфига единственная кнопка создания — в карточке ниже
+  els.btnVpnDeckToggle.classList.toggle('hidden', !configured && !running);
+  if (!vpnProgressText) els.btnVpnGenerate.textContent = configured ? 'Создать новый конфиг' : 'Создать и подключить';
   els.btnVpnDeckToggle.disabled = els.btnQuickVpn.disabled;
   els.btnVpnDeckToggle.classList.toggle('btn-glow', !running);
   els.btnVpnDeckToggle.classList.toggle('btn-soft', running);
@@ -2997,7 +3029,7 @@ els.btnVpnGenerate.addEventListener('click', () => {
       const ok = await confirmModal(
         'Создать новый конфиг',
         'Текущий конфиг VPN будет заменён новым конфигом Cloudflare WARP.',
-        'Если старый пригодится, сначала сохраните его кнопкой «Экспорт .conf».'
+        'Если старый пригодится, сначала сохраните его кнопкой «Сохранить в файл».'
       );
       if (!ok) return;
     }

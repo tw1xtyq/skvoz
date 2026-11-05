@@ -142,8 +142,17 @@ export class TgwsProxyManager {
       cfCachePath: path.join(app.getPath('userData'), 'tgws-cf-domains.json'),
       onLog: (level, message) => this.log(level, message),
     };
-    this.server = new TgwsServer(options);
-    await this.server.start();
+    // Сервер запоминаем только после успешного запуска: иначе при занятом порте статус врёт «включён»
+    const server = new TgwsServer(options);
+    try {
+      await server.start();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+        throw new Error(`Порт ${cfg.port} занят другой программой. Закройте её или смените порт в настройках подключения`);
+      }
+      throw error;
+    }
+    this.server = server;
     this.log('success', `MTProto→WS прокси запущен на ${cfg.host}:${cfg.port}`);
     this.emitState();
   }

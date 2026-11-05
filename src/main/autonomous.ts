@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import {
   downloadOfficialZapret,
   fetchLatestRelease,
@@ -30,6 +31,16 @@ export interface BootstrapState {
 }
 
 export type BootstrapCallback = (state: BootstrapState) => void;
+
+/** Установщик оставляет этот файл рядом с Skvoz.exe при новой установке, но не при обновлении */
+export const FRESH_INSTALL_MARKER = 'fresh-install';
+
+export function consumeFreshInstallMarker(appDir: string): boolean {
+  const marker = path.join(appDir, FRESH_INSTALL_MARKER);
+  if (!fs.existsSync(marker)) return false;
+  fs.rmSync(marker, { force: true });
+  return true;
+}
 
 function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map(Number);

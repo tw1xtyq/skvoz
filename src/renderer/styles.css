@@ -4216,6 +4216,23 @@ summary:focus-visible {
 }
 .quick-control-meta:empty { display: none; }
 
+/* На Главной сразу видно, что для чего */
+.quick-control-for {
+  color: var(--dim);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+/* Раскрывающийся блок, с которого начинается карточка */
+.command-deck > .disclosure,
+.tg-form > .disclosure:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.config-more { margin-bottom: 12px; }
+.config-more .test-actions { margin-bottom: 0; }
+
 /* Цифры, которые меняются, не «пляшут» */
 .tg-stat,
 .quick-control-meta { font-variant-numeric: tabular-nums; }

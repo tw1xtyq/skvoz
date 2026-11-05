@@ -297,6 +297,14 @@ function pickBest(candidates: InstallCandidate[], installBase?: string): Install
   })[0];
 }
 
+/**
+ * Служба или процесс могут указывать на папку, откуда антивирус уже убрал winws.exe.
+ * Такая папка не установка: иначе автоустановка считала бы, что zapret найден
+ */
+export function dropMissingInstalls(candidates: InstallCandidate[]): InstallCandidate[] {
+  return candidates.filter((candidate) => isZapretCandidate(candidate.path));
+}
+
 export async function scanForInstallations(
   extraPaths: string[] = [],
   installBase?: string,
@@ -341,7 +349,7 @@ export async function scanForInstallations(
     if (!existing || candidate.score > existing.score) unique.set(candidate.path, candidate);
   }
 
-  const list = [...unique.values()];
+  const list = dropMissingInstalls([...unique.values()]);
   return {
     candidates: list.sort((a, b) => b.score - a.score),
     best: pickBest(list, searchBase),

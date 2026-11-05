@@ -32,6 +32,15 @@
   !insertmacro MUI_PAGE_FINISH
 !macroend
 
+; Skvoz при первом запуске сам ставит zapret, но после «Удалить с ПК» это запрещено настройкой,
+; которая переживает удаление. Метка отличает новую установку от обновления
+!macro customInstall
+  ${ifNot} ${isUpdated}
+    FileOpen $0 "$INSTDIR\fresh-install" w
+    FileClose $0
+  ${endIf}
+!macroend
+
 !macro customUnWelcomePage
   !define MUI_WELCOMEPAGE_TITLE "Удаление Skvoz"
   !define MUI_WELCOMEPAGE_TEXT "Skvoz будет удалён с компьютера.$\r$\n$\r$\nПапка zapret со списками доменов останется на месте. Чтобы убрать и её, перед удалением откройте Skvoz → «Сервис» → «Удалить с ПК».$\r$\n$\r$\nНажмите «Далее», чтобы продолжить."
