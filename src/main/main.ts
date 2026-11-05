@@ -39,6 +39,7 @@ import { normalizeProbeSite, pickProbeUrls, probeBypassTargets } from './bypass-
 import { BypassEventLog, type BypassEventKind } from './bypass-events';
 import { BackgroundRerank, hasDisplayRequests } from './background-rerank';
 import { buildDiagnosticReport, type LogLine } from './diagnostic-report';
+import { loadLogProblems, saveLogProblems } from './tool-log';
 import { capture, detectNetwork, interfacesFingerprint, UNKNOWN_NETWORK, type NetworkIdentity } from './network-id';
 import { StrategyMemory } from './strategy-memory';
 import { withStatusDot, type Rgb } from './tray-badge';
@@ -252,7 +253,8 @@ const TOOL_LOG_LIMIT = 400;
 
 const strategyMemory = new StrategyMemory(path.join(app.getPath('userData'), 'strategy-memory.json'));
 const bypassEvents = new BypassEventLog(path.join(app.getPath('userData'), 'bypass-events.json'));
-const toolLog: LogLine[] = [];
+const toolErrorsFile = path.join(app.getPath('userData'), 'tool-errors.json');
+const toolLog: LogLine[] = loadLogProblems(toolErrorsFile);
 const tgLogRepeats = new RepeatFilter(60_000);
 let currentNetwork: NetworkIdentity = UNKNOWN_NETWORK;
 let networkFingerprint = '';
@@ -1490,6 +1492,7 @@ async function requireZapretPath(): Promise<string> {
 function rememberToolLog(text: string, level: string): void {
   toolLog.push({ at: Date.now(), level, text });
   if (toolLog.length > TOOL_LOG_LIMIT) toolLog.splice(0, toolLog.length - TOOL_LOG_LIMIT);
+  if (level === 'error' || level === 'warn') saveLogProblems(toolErrorsFile, toolLog);
 }
 
 function sendToolOutput(text: string, level: string): void {

@@ -4,7 +4,7 @@ import fs from 'fs';
 import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { runHidden } from './exec';
+import { decodeProcessOutput, runHidden } from './exec';
 import { removeDirectoryRobust } from './fs-remove';
 import { describeNetworkError, downloadWithRetry, httpFetch } from './http';
 import { ensureUserListFiles } from './user-lists';
@@ -78,12 +78,13 @@ function runPowerShell(script: string): Promise<string> {
       { windowsHide: true }
     );
     let stdout = '';
-    let stderr = '';
+    const stderr: Buffer[] = [];
     child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
+    child.stderr.on('data', (d: Buffer) => stderr.push(d));
     child.on('close', (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(stderr.trim() || `PowerShell exited with code ${code}`));
+      // Ошибки PowerShell приходят в кодировке консоли: без декодирования вместо причины будут кракозябры
+      else reject(new Error(decodeProcessOutput(Buffer.concat(stderr)).trim() || `PowerShell exited with code ${code}`));
     });
     child.on('error', reject);
   });
@@ -261,6 +262,19 @@ async function removeFileQuiet(filePath: string): Promise<void> {
   }
 }
 
+/** Только системный bsdtar: GNU tar из Git и MSYS принимает «C:\...» за хост и не умеет ZIP */
+export function systemTarPath(systemRoot: string = process.env.SystemRoot ?? 'C:\\Windows'): string {
+  return path.win32.join(systemRoot, 'System32', 'tar.exe');
+}
+
+export async function extractZipWithTar(zipPath: string, destDir: string): Promise<void> {
+  await runHidden(systemTarPath(), ['-xf', zipPath, '-C', destDir], { timeoutMs: 120_000 });
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function extractZip(zipPath: string, destDir: string, onProgress: ProgressCallback): Promise<void> {
   const report = createProgressReporter(onProgress);
   report({ stage: 'extract', percent: 0, message: 'Распаковка архива...' });
@@ -274,13 +288,14 @@ Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destD
 
   try {
     await runPowerShell(script);
-  } catch {
+  } catch (expandError) {
     // Expand-Archive бывает недоступен: повреждён модуль или PowerShell урезан политикой
     try {
-      await runHidden('tar.exe', ['-xf', zipPath, '-C', destDir], { timeoutMs: 120_000 });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(`Не удалось распаковать архив: ${reason}. ${ANTIVIRUS_HINT}`);
+      await extractZipWithTar(zipPath, destDir);
+    } catch (tarError) {
+      throw new Error(
+        `Не удалось распаковать архив: ${errorText(expandError)}; tar: ${errorText(tarError)}. ${ANTIVIRUS_HINT}`
+      );
     }
   }
   await removeFileQuiet(zipPath);
