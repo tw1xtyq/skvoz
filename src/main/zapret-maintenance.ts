@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { shell } from 'electron';
 import { assertAdmin } from './admin';
+import { httpFetch } from './http';
 import type { OutputCallback } from './diagnostics';
 import { shutdownZapretCompletely } from './uninstall';
 
@@ -65,7 +66,7 @@ async function downloadText(url: string, timeoutMs = 20_000): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
+    const response = await httpFetch(url, {
       headers: { 'User-Agent': 'zapret-app' },
       redirect: 'follow',
       signal: controller.signal,

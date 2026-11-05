@@ -12,6 +12,7 @@ import {
   type RelayInit,
 } from './protocol';
 import { RawWebSocket } from './ws';
+import { httpFetch } from '../http';
 
 /**
  * Local MTProto -> WebSocket Telegram proxy, ported from Flowseal/tg-ws-proxy
@@ -434,7 +435,7 @@ export class TgwsServer {
     if (this.cfRefreshing) return;
     this.cfRefreshing = true;
     try {
-      const res = await fetch(CFPROXY_DOMAINS_URL);
+      const res = await httpFetch(CFPROXY_DOMAINS_URL);
       if (!res.ok) return;
       const text = await res.text();
       const lines = text.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));

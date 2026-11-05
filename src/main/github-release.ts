@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { httpFetch } from './http';
 
 /** Последний релиз стороннего компонента на GitHub с проверяемым файлом. */
 export interface GithubAsset {
@@ -12,7 +13,7 @@ export interface GithubAsset {
 const HEADERS = { 'User-Agent': 'zapret-app', Accept: 'application/vnd.github+json' };
 
 export async function fetchLatestAsset(repo: string, assetPattern: RegExp, timeoutMs = 8_000): Promise<GithubAsset> {
-  const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+  const response = await httpFetch(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: HEADERS,
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -37,7 +38,7 @@ export async function fetchLatestAsset(repo: string, assetPattern: RegExp, timeo
 }
 
 export async function downloadVerified(asset: GithubAsset, timeoutMs = 120_000): Promise<Buffer> {
-  const response = await fetch(asset.url, {
+  const response = await httpFetch(asset.url, {
     headers: { 'User-Agent': 'zapret-app' },
     redirect: 'follow',
     signal: AbortSignal.timeout(timeoutMs),

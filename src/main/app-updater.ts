@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { UPDATED_LAUNCH_ARG } from './autostart';
+import { describeNetworkError, downloadWithRetry, httpFetch } from './http';
 import { compareVersions, normalizeVersion } from './version-utils';
 import type { DownloadProgress } from './downloader';
 
@@ -166,7 +167,7 @@ function pickReleaseAsset(
 }
 
 export async function fetchLatestAppRelease(kind = preferredUpdateKind()): Promise<AppReleaseInfo> {
-  const response = await fetch(`https://api.github.com/repos/${APP_GITHUB_REPO}/releases/latest`, {
+  const response = await httpFetch(`https://api.github.com/repos/${APP_GITHUB_REPO}/releases/latest`, {
     headers: { 'User-Agent': 'zapret-app', Accept: 'application/vnd.github+json' },
     signal: AbortSignal.timeout(15_000),
   });
@@ -258,65 +259,19 @@ function findAppRoot(dir: string): string | null {
   return null;
 }
 
-const DOWNLOAD_STALL_MS = 45_000;
-
 async function downloadFile(url: string, dest: string, onProgress: ProgressCallback): Promise<void> {
-  let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await downloadFileOnce(url, dest, onProgress);
-      return;
-    } catch (error) {
-      lastError = error;
-      fs.rmSync(dest, { force: true });
-      if (attempt < 3) {
-        onProgress({ stage: 'download', percent: 0, message: `Сбой загрузки, повтор ${attempt + 1}/3...` });
-        await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
-      }
-    }
-  }
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Не удалось скачать обновление: ${message}`);
-}
-
-async function downloadFileOnce(url: string, dest: string, onProgress: ProgressCallback): Promise<void> {
-  const controller = new AbortController();
-  let stallTimer = setTimeout(() => controller.abort(), DOWNLOAD_STALL_MS);
-  const bump = (): void => {
-    clearTimeout(stallTimer);
-    stallTimer = setTimeout(() => controller.abort(), DOWNLOAD_STALL_MS);
-  };
-
+  let lastPercent = -1;
+  const mb = (bytes: number): string => (bytes / 1048576).toFixed(1);
   try {
-    const response = await fetch(url, {
+    await downloadWithRetry(url, dest, {
       headers: { 'User-Agent': 'zapret-app' },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-
-    if (!response.ok || !response.body) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const total = parseInt(response.headers.get('content-length') ?? '0', 10);
-    const reader = response.body.getReader();
-    const file = fs.createWriteStream(dest);
-    let downloaded = 0;
-    let lastPercent = -1;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bump();
-        downloaded += value.length;
-        if (!file.write(Buffer.from(value))) {
-          await new Promise<void>((resolve) => file.once('drain', () => resolve()));
-        }
+      onRetry: (attempt, attempts) => {
+        onProgress({ stage: 'download', percent: 0, message: `Сбой загрузки, повтор ${attempt}/${attempts}...` });
+      },
+      onData: (downloaded, total) => {
         const percent = total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0;
-        if (total > 0 && percent === lastPercent) continue;
+        if (total > 0 && percent === lastPercent) return;
         lastPercent = percent;
-        const mb = (bytes: number): string => (bytes / 1048576).toFixed(1);
         onProgress({
           stage: 'download',
           percent,
@@ -324,22 +279,10 @@ async function downloadFileOnce(url: string, dest: string, onProgress: ProgressC
             ? `Загрузка обновления: ${mb(downloaded)} из ${mb(total)} МБ`
             : `Загрузка обновления: ${mb(downloaded)} МБ`,
         });
-      }
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        file.end(() => resolve());
-        file.on('error', reject);
-      });
-    }
-
-    if (total > 0 && downloaded !== total) {
-      throw new Error(`файл скачан не полностью (${downloaded} из ${total} байт)`);
-    }
+      },
+    });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error('GitHub не отвечает больше 45 секунд');
-    throw error;
-  } finally {
-    clearTimeout(stallTimer);
+    throw new Error(`Не удалось скачать обновление: ${describeNetworkError(error)}`);
   }
 }
 

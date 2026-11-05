@@ -6,6 +6,7 @@ import { app } from 'electron';
 import { amneziaVpn, secureDirectory, SKVOZ_PROGRAM_DATA, type VpnConfigSummary } from './amneziawg';
 import { runHidden } from './exec';
 import { downloadVerified, fetchLatestAsset } from './github-release';
+import { httpFetch } from './http';
 import { compareVersions } from './version-utils';
 
 /**
@@ -156,7 +157,7 @@ async function loadWarpParams(onProgress: WarpProgress): Promise<WarpParams> {
   if (cached && Date.now() - cached.fetchedAt < REFRESH_INTERVAL_MS) return cached.params;
   onProgress('Проверяем актуальные параметры маскировки…');
   try {
-    const response = await fetch(UPSTREAM_URL, { headers: { 'User-Agent': 'zapret-app' }, signal: AbortSignal.timeout(8_000) });
+    const response = await httpFetch(UPSTREAM_URL, { headers: { 'User-Agent': 'zapret-app' }, signal: AbortSignal.timeout(8_000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const script = await response.text();
     const params = parseUpstreamScript(script);
@@ -193,7 +194,7 @@ function generateKeyPair(): { privateKey: string; publicKey: string } {
 async function warpApi<T>(api: string, method: string, route: string, body: unknown, token?: string): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(`${api}/${route}`, {
+    response = await httpFetch(`${api}/${route}`, {
       method,
       headers: {
         'User-Agent': 'okhttp/3.12.1',

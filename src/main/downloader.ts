@@ -1,18 +1,25 @@
 import { spawn } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { runHidden } from './exec';
 import { removeDirectoryRobust } from './fs-remove';
+import { describeNetworkError, downloadWithRetry, httpFetch } from './http';
 import { ensureUserListFiles } from './user-lists';
 
 export const GITHUB_REPO = 'Flowseal/zapret-discord-youtube';
 export const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases/latest`;
+const VERSION_FILE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/.service/version.txt`;
+const RELEASE_LOOKUP_TIMEOUT_MS = 15_000;
 
 export interface ReleaseInfo {
   version: string;
   zipUrl: string;
   zipName: string;
+  /** считает сам GitHub; в запасном пути без API его нет */
+  sha256: string | null;
   releasePage: string;
 }
 
@@ -86,19 +93,20 @@ function psQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-export async function fetchLatestRelease(): Promise<ReleaseInfo> {
-  const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+async function fetchReleaseFromApi(): Promise<ReleaseInfo> {
+  const response = await httpFetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
     headers: { 'User-Agent': 'zapret-app', Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    throw new Error(`Не удалось получить релиз GitHub: HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}`);
   }
 
   const data = (await response.json()) as {
     tag_name: string;
     html_url: string;
-    assets: Array<{ name: string; browser_download_url: string }>;
+    assets: Array<{ name: string; browser_download_url: string; digest?: string | null }>;
   };
 
   const zipAsset =
@@ -113,8 +121,42 @@ export async function fetchLatestRelease(): Promise<ReleaseInfo> {
     version: data.tag_name.replace(/^v/, ''),
     zipUrl: zipAsset.browser_download_url,
     zipName: zipAsset.name,
+    sha256: zipAsset.digest?.match(/^sha256:([0-9a-f]{64})$/i)?.[1]?.toLowerCase() ?? null,
     releasePage: data.html_url,
   };
+}
+
+/** Версия из того же файла, что читает service.bat: у API лимит 60 запросов в час на IP, а за NAT он общий */
+async function fetchReleaseFromVersionFile(): Promise<ReleaseInfo> {
+  const response = await httpFetch(VERSION_FILE_URL, {
+    headers: { 'User-Agent': 'zapret-app' },
+    signal: AbortSignal.timeout(RELEASE_LOOKUP_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+  const version = (await response.text()).trim();
+  if (!/^\d+\.\d+\.\d+[a-z]?$/i.test(version)) throw new Error('Неверный формат version.txt');
+
+  const zipName = `zapret-discord-youtube-${version}.zip`;
+  return {
+    version,
+    zipUrl: `https://github.com/${GITHUB_REPO}/releases/download/${version}/${zipName}`,
+    zipName,
+    sha256: null,
+    releasePage: `https://github.com/${GITHUB_REPO}/releases/tag/${version}`,
+  };
+}
+
+export async function fetchLatestRelease(): Promise<ReleaseInfo> {
+  try {
+    return await fetchReleaseFromApi();
+  } catch (apiError) {
+    try {
+      return await fetchReleaseFromVersionFile();
+    } catch {
+      throw new Error(`Не удалось получить релиз GitHub: ${describeNetworkError(apiError)}`);
+    }
+  }
 }
 
 async function downloadFile(
@@ -123,53 +165,39 @@ async function downloadFile(
   onProgress: ProgressCallback
 ): Promise<void> {
   const report = createProgressReporter(onProgress);
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'zapret-app' },
-    redirect: 'follow',
-  });
-
-  if (!response.ok || !response.body) {
-    throw new Error(`Ошибка загрузки: HTTP ${response.status}`);
-  }
-
-  const total = parseInt(response.headers.get('content-length') ?? '0', 10);
-  const reader = response.body.getReader();
-  const file = fs.createWriteStream(dest);
-  let downloaded = 0;
   let lastPercent = -1;
   let lastReportAt = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    downloaded += value.length;
+  await downloadWithRetry(url, dest, {
+    headers: { 'User-Agent': 'zapret-app' },
+    onRetry: (attempt, attempts) => {
+      report({ stage: 'download', percent: 0, message: `Сбой загрузки, повтор ${attempt}/${attempts}...` });
+    },
+    onData: (downloaded, total) => {
+      const percent = total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0;
+      const now = Date.now();
+      const shouldReport =
+        total === 0
+          ? now - lastReportAt >= 250
+          : percent !== lastPercent || now - lastReportAt >= PROGRESS_MIN_INTERVAL_MS || percent >= 99;
 
-    if (!file.write(Buffer.from(value))) {
-      await new Promise<void>((resolve) => file.once('drain', resolve));
-    }
-
-    const percent = total > 0 ? Math.min(99, Math.round((downloaded / total) * 100)) : 0;
-    const now = Date.now();
-    const shouldReport =
-      total === 0
-        ? now - lastReportAt >= 250
-        : percent !== lastPercent || now - lastReportAt >= PROGRESS_MIN_INTERVAL_MS || percent >= 99;
-
-    if (shouldReport) {
-      report({
-        stage: 'download',
-        percent,
-        message: total > 0 ? `Загрузка: ${percent}%` : `Загрузка: ${formatBytes(downloaded)}`,
-      });
-      lastPercent = percent;
-      lastReportAt = now;
-    }
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    file.end(() => resolve());
-    file.on('error', reject);
+      if (shouldReport) {
+        report({
+          stage: 'download',
+          percent,
+          message: total > 0 ? `Загрузка: ${percent}%` : `Загрузка: ${formatBytes(downloaded)}`,
+        });
+        lastPercent = percent;
+        lastReportAt = now;
+      }
+    },
   });
+}
+
+function assertChecksum(filePath: string, expected: string | null): void {
+  if (!expected) return;
+  const actual = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  if (actual !== expected) throw new Error('контрольная сумма архива не совпала — файл повреждён при загрузке');
 }
 
 function formatBytes(bytes: number): string {
@@ -191,6 +219,19 @@ function findZapretRoot(dir: string): string | null {
   }
 
   return null;
+}
+
+const REQUIRED_BINARIES = ['bin/winws.exe', 'bin/WinDivert.dll', 'bin/WinDivert64.sys'];
+
+const ANTIVIRUS_HINT =
+  'Обычно их удаляет антивирус: WinDivert считается потенциально нежелательным. Добавьте папку zapret в исключения и скачайте снова.';
+
+/** Проверяем до замены старой установки: без драйвера обход не запустится */
+export function assertBinariesPresent(root: string): void {
+  const missing = REQUIRED_BINARIES.filter((relative) => !fs.existsSync(path.join(root, relative)));
+  if (missing.length > 0) {
+    throw new Error(`После распаковки нет файлов: ${missing.join(', ')}. ${ANTIVIRUS_HINT}`);
+  }
 }
 
 function backupUserFiles(sourceRoot: string): Map<string, Buffer> {
@@ -227,10 +268,21 @@ async function extractZip(zipPath: string, destDir: string, onProgress: Progress
 
   const script = `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force
 `.trim();
 
-  await runPowerShell(script);
+  try {
+    await runPowerShell(script);
+  } catch {
+    // Expand-Archive бывает недоступен: повреждён модуль или PowerShell урезан политикой
+    try {
+      await runHidden('tar.exe', ['-xf', zipPath, '-C', destDir], { timeoutMs: 120_000 });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Не удалось распаковать архив: ${reason}. ${ANTIVIRUS_HINT}`);
+    }
+  }
   await removeFileQuiet(zipPath);
   report({ stage: 'extract', percent: 100, message: 'Архив распакован' });
 }
@@ -243,7 +295,8 @@ async function unblockZapretBinaries(root: string): Promise<void> {
 $ErrorActionPreference = 'SilentlyContinue'
 Get-ChildItem -LiteralPath ${psQuote(binDir)} -Recurse -Include *.exe,*.dll -File | Unblock-File
 `.trim();
-  await runPowerShell(script);
+  // Метку «из интернета» ставят браузеры, а не мы: без этого шага zapret всё равно запустится
+  await runPowerShell(script).catch(() => undefined);
 }
 
 export async function unblockZapretInstall(root: string): Promise<void> {
@@ -323,18 +376,20 @@ async function copyDirectory(source: string, target: string, onPulse?: () => voi
   }
 }
 
+/** Сразу после распаковки файлы держит антивирус, и rename на Windows отказывает любым из этих кодов */
+function isRenameBlocked(err: unknown): boolean {
+  const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
+  return code === 'EXDEV' || code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+}
+
 async function moveDirectory(source: string, target: string): Promise<void> {
   await fsp.mkdir(path.dirname(target), { recursive: true });
   try {
     await fsp.rename(source, target);
   } catch (err) {
-    const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
-    if (code === 'EXDEV' || code === 'EPERM') {
-      await copyDirectory(source, target);
-      await removeDirectory(source, false);
-      return;
-    }
-    throw err;
+    if (!isRenameBlocked(err)) throw err;
+    await copyDirectory(source, target);
+    await removeDirectory(source, false);
   }
 }
 
@@ -367,8 +422,7 @@ async function promoteStagingToInstall(
     await fsp.rename(stagingPath, installPath);
     return;
   } catch (err) {
-    const code = err instanceof Error ? (err as NodeJS.ErrnoException).code : undefined;
-    if (code !== 'EXDEV' && code !== 'EPERM') throw err;
+    if (!isRenameBlocked(err)) throw err;
   }
 
   report({ stage: 'install', percent: 62, message: 'Копирование файлов установки...' });
@@ -441,6 +495,10 @@ export function readInstalledVersion(root: string): string | null {
   return null;
 }
 
+function withManualInstallHint(reason: string): Error {
+  return new Error(`${reason}. Можно поставить вручную: скачайте ZIP с ${GITHUB_RELEASES_URL}, распакуйте и нажмите «Найти на ПК».`);
+}
+
 export async function downloadOfficialZapret(
   installBase: string,
   existingRoot: string | null,
@@ -450,7 +508,9 @@ export async function downloadOfficialZapret(
 
   report({ stage: 'fetch', percent: 0, message: 'Получение информации о релизе...' });
   await yieldToEventLoop();
-  const release = await fetchLatestRelease();
+  const release = await fetchLatestRelease().catch((error) => {
+    throw withManualInstallHint(error instanceof Error ? error.message : String(error));
+  });
   report({ stage: 'fetch', percent: 100, message: `Найден релиз ${release.version}` });
 
   const installPath = getInstallPath(installBase, release.version);
@@ -464,7 +524,12 @@ export async function downloadOfficialZapret(
       percent: 0,
       message: `Загрузка ${release.zipName} с GitHub...`,
     });
-    await downloadFile(release.zipUrl, zipPath, report);
+    try {
+      await downloadFile(release.zipUrl, zipPath, report);
+      assertChecksum(zipPath, release.sha256);
+    } catch (error) {
+      throw withManualInstallHint(`Не удалось скачать zapret: ${describeNetworkError(error)}`);
+    }
 
     await yieldToEventLoop();
     await extractZip(zipPath, extractDir, report);
@@ -473,8 +538,9 @@ export async function downloadOfficialZapret(
     await yieldToEventLoop();
     const extractedRoot = findZapretRoot(extractDir);
     if (!extractedRoot) {
-      throw new Error('В архиве не найден winws.exe');
+      throw new Error(`После распаковки нет bin/winws.exe. ${ANTIVIRUS_HINT}`);
     }
+    assertBinariesPresent(extractedRoot);
 
     const backup =
       existingRoot && fs.existsSync(existingRoot) ? backupUserFiles(existingRoot) : new Map<string, Buffer>();

@@ -781,6 +781,7 @@ async function ensureBootstrap(force = false): Promise<void> {
       mainWindow?.webContents.send('bootstrap-complete', result.state);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      rememberToolLog(message, 'error');
       const errorState: BootstrapState = {
         stage: 'error',
         message,
@@ -1465,12 +1466,14 @@ async function requireZapretPath(): Promise<string> {
   return resolved;
 }
 
+function rememberToolLog(text: string, level: string): void {
+  toolLog.push({ at: Date.now(), level, text });
+  if (toolLog.length > TOOL_LOG_LIMIT) toolLog.splice(0, toolLog.length - TOOL_LOG_LIMIT);
+}
+
 function sendToolOutput(text: string, level: string): void {
   // служебные строки подбора (JSON для интерфейса) в отчёт не нужны
-  if (!text.startsWith('__')) {
-    toolLog.push({ at: Date.now(), level, text });
-    if (toolLog.length > TOOL_LOG_LIMIT) toolLog.splice(0, toolLog.length - TOOL_LOG_LIMIT);
-  }
+  if (!text.startsWith('__')) rememberToolLog(text, level);
   mainWindow?.webContents.send('tool-output', { text, level });
 }
 
@@ -2252,7 +2255,10 @@ function registerIpc(): void {
       config.installBase,
       isValidZapretPath(config.zapretPath) ? config.zapretPath : null,
       sendDownloadProgress
-    );
+    ).catch((error) => {
+      rememberToolLog(error instanceof Error ? error.message : String(error), 'error');
+      throw error;
+    });
 
     config.zapretPath = result.installPath;
     config.bootstrapDone = true;

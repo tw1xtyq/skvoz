@@ -58,13 +58,6 @@ export async function runAutonomousBootstrap(
 
   const scan = await scanForInstallations(currentPath ? [currentPath] : [], installBase);
   const best = scan.best;
-  let latestVersion: string | null = null;
-
-  try {
-    latestVersion = (await fetchLatestRelease()).version;
-  } catch {
-    latestVersion = null;
-  }
 
   if (!best) {
     onProgress({
@@ -146,6 +139,13 @@ export async function runAutonomousBootstrap(
       onProgress(fallback);
       return { path: best.path, state: fallback };
     }
+  }
+
+  let latestVersion: string | null = null;
+  try {
+    latestVersion = (await fetchLatestRelease()).version;
+  } catch {
+    latestVersion = null;
   }
 
   const needsUpdate =

@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -10,14 +10,41 @@ export function isElevatedRelaunch(): boolean {
   return process.argv.includes(ELEVATED_RELAUNCH_ARG);
 }
 
-export function isWindowsAdmin(): boolean {
-  if (process.platform !== 'win32') return true;
+/** Метка уровня токена: High или System значит, что процесс запущен с повышенными правами */
+export function hasElevatedIntegrity(whoamiGroups: string): boolean {
+  return /S-1-16-(12288|16384)\b/.test(whoamiGroups);
+}
+
+function detectWindowsAdmin(): boolean {
   try {
-    execSync('net session', { stdio: 'ignore' });
+    const whoami = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe');
+    const groups = execFileSync(whoami, ['/groups', '/fo', 'csv', '/nh'], {
+      encoding: 'latin1',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    if (/S-1-16-\d+/.test(groups)) return hasElevatedIntegrity(groups);
+  } catch {
+    /* проверим запасным способом */
+  }
+
+  // net session зависит от службы «Сервер»: если её отключили, он отказывает и администратору
+  try {
+    execSync('net session', { stdio: 'ignore', windowsHide: true });
     return true;
   } catch {
     return false;
   }
+}
+
+let windowsAdmin: boolean | null = null;
+
+/** Права процесса не меняются, пока он работает, а проверка блокирует главный поток */
+export function isWindowsAdmin(): boolean {
+  if (process.platform !== 'win32') return true;
+  windowsAdmin ??= detectWindowsAdmin();
+  return windowsAdmin;
 }
 
 export function assertAdmin(): void {
