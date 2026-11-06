@@ -8,8 +8,8 @@
 
 ## Скачать
 
-- [**Skvoz-Setup-1.11.5.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.5/Skvoz-Setup-1.11.5.exe) — установщик (рекомендуется)
-- [**Skvoz-1.11.5-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.5/Skvoz-1.11.5-Portable.exe) — без установки
+- [**Skvoz-Setup-1.11.6.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.6/Skvoz-Setup-1.11.6.exe) — установщик (рекомендуется)
+- [**Skvoz-1.11.6-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.6/Skvoz-1.11.6-Portable.exe) — без установки
 
 Нужны Windows 10/11 x64 и права администратора. Все версии — на странице [Releases](https://github.com/tw1xtyq/skvoz/releases).
 

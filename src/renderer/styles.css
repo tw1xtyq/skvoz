@@ -4675,3 +4675,105 @@ details[open] > :not(summary) { animation: details-fade 0.34s var(--ease-out) bo
   .quick-control-item::before,
   .about-link::before { display: none; }
 }
+
+/* ── О Skvoz: шапка, ровный ряд ссылок, таблица авторов ── */
+.about-hero { display: grid; gap: 16px; }
+.about-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.about-logo { width: 52px; height: 52px; flex: 0 0 52px; border-radius: var(--radius); }
+.about-name { min-width: 0; }
+.about-name h3 { margin: 0; font-size: 1.15rem; font-weight: 650; letter-spacing: -0.01em; }
+.about-name p { margin: 3px 0 0; color: var(--muted); font-size: 0.8rem; }
+.about-version {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.about-version:empty { display: none; }
+
+.about-links { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.about-link { min-height: 0; }
+.about-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.about-licenses { flex: 0 0 auto; margin-left: auto; }
+.about-credits .card-hint code { font: inherit; color: var(--text); }
+.credit-list { display: grid; }
+.credit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) 92px;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.25s var(--ease);
+}
+.credit-row:hover { background: var(--surface-hover); }
+.credit-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+.credit-row strong { overflow: hidden; font-size: 0.82rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.credit-row span { overflow: hidden; color: var(--muted); font-size: 0.76rem; text-overflow: ellipsis; white-space: nowrap; }
+.credit-row em { color: var(--dim); font-size: 0.72rem; font-style: normal; text-align: right; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .about-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .credit-row { grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; }
+  .credit-row span { grid-row: 2; grid-column: 1 / -1; }
+}
+
+/* ── Трей: те же плитки и индикаторы, что на Главной ── */
+body.tray-popup { gap: 8px; padding: 12px; background: var(--bg); }
+.tp-head { padding: 2px 2px 4px; }
+.tp-row,
+.tp-row.is-live,
+.tp-row.is-warn,
+.tp-row.is-bad {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--glass);
+  box-shadow: none;
+}
+.tp-row:hover { border-color: var(--line-strong); }
+.tp-row.is-live { border-color: color-mix(in srgb, var(--ok) 28%, var(--line)); }
+.tp-dot { width: 10px; height: 10px; flex: 0 0 10px; }
+.tp-row.is-live .tp-dot,
+.tp-row.is-warn .tp-dot,
+.tp-row.is-bad .tp-dot { box-shadow: none; }
+
+.tp-access span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 0;
+  background: var(--surface);
+  font-weight: 600;
+  transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.tp-access span::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.tp-access .is-ok,
+.tp-access .is-partial,
+.tp-access .is-fail { color: var(--text); }
+.tp-access .is-ok::before { background: var(--ok); }
+.tp-access .is-partial::before { background: var(--warn); }
+.tp-access .is-fail::before { background: var(--danger); }
+.tp-access .is-checking::before { background: var(--accent); }

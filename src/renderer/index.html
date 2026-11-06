@@ -828,62 +828,61 @@
 
     <!-- О программе -->
     <section class="page" data-page="about">
-      <section class="glass-card bento-card about-card">
-        <header class="card-head card-head-stack">
-          <div class="card-head-row">
-            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
-            <h3>О Skvoz</h3>
+      <section class="glass-card bento-card about-hero">
+        <div class="about-id">
+          <img class="about-logo" src="assets/logo.png" alt="">
+          <div class="about-name">
+            <h3>Skvoz</h3>
+            <p>Пульт для zapret, Telegram-прокси и VPN</p>
           </div>
-          <p class="card-hint" id="appVersionLine">Skvoz v—</p>
-        </header>
+          <span class="about-version" id="appVersionLine">—</span>
+        </div>
         <div class="about-links">
           <button class="about-link" id="linkAppSite" type="button">
-            <strong>Сайт Skvoz</strong><span>tw1xtyq.github.io</span>
+            <strong>Сайт</strong><span>tw1xtyq.github.io</span>
           </button>
           <button class="about-link" id="linkAppRepo" type="button">
-            <strong>Релизы и изменения</strong><span>github.com/tw1xtyq/skvoz</span>
+            <strong>Релизы</strong><span>История изменений</span>
           </button>
           <button class="about-link" id="linkAppDocs" type="button">
-            <strong>Инструкция</strong><span>Как пользоваться, списки, обновления</span>
+            <strong>Инструкция</strong><span>Как пользоваться</span>
           </button>
           <button class="about-link" id="linkOfficial" type="button">
-            <strong>Официальный zapret</strong><span>Flowseal/zapret-discord-youtube</span>
+            <strong>Zapret</strong><span>Официальный проект</span>
           </button>
         </div>
       </section>
 
-      <section class="glass-card bento-card about-card">
+      <section class="glass-card bento-card about-credits" id="creditLinks">
         <header class="card-head card-head-stack">
           <div class="card-head-row">
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.4-7.5-10A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.9c0 5.6-7.5 10-7.5 10z"/></svg></span>
             <h3>Авторы и лицензии</h3>
+            <button class="btn btn-soft btn-sm about-licenses" type="button" data-url="https://github.com/tw1xtyq/skvoz/blob/main/THIRD_PARTY_NOTICES.md">Все лицензии</button>
           </div>
-          <p class="card-hint">Skvoz работает благодаря этим проектам. Тексты лицензий лежат в папке программы: resources\licenses</p>
+          <p class="card-hint">Skvoz работает благодаря этим проектам. Тексты лицензий лежат в папке программы: <code>resources\licenses</code></p>
         </header>
-        <div class="about-links" id="creditLinks">
-          <button class="about-link" type="button" data-url="https://github.com/Flowseal/zapret-discord-youtube">
-            <strong>zapret-discord-youtube</strong><span>Flowseal · обход блокировок · MIT</span>
+        <div class="credit-list">
+          <button class="credit-row" type="button" data-url="https://github.com/Flowseal/zapret-discord-youtube">
+            <strong>zapret-discord-youtube</strong><span>Flowseal · обход блокировок</span><em>MIT</em>
           </button>
-          <button class="about-link" type="button" data-url="https://github.com/bol-van/zapret">
-            <strong>zapret</strong><span>bol-van · основа обхода, winws</span>
+          <button class="credit-row" type="button" data-url="https://github.com/bol-van/zapret">
+            <strong>zapret</strong><span>bol-van · основа обхода, winws</span><em></em>
           </button>
-          <button class="about-link" type="button" data-url="https://github.com/Flowseal/tg-ws-proxy">
-            <strong>tg-ws-proxy</strong><span>Flowseal · Telegram-прокси · MIT</span>
+          <button class="credit-row" type="button" data-url="https://github.com/Flowseal/tg-ws-proxy">
+            <strong>tg-ws-proxy</strong><span>Flowseal · Telegram-прокси</span><em>MIT</em>
           </button>
-          <button class="about-link" type="button" data-url="https://github.com/ImMALWARE/bash-warp-generator">
-            <strong>bash-warp-generator</strong><span>MALWARE · генератор WARP · MIT</span>
+          <button class="credit-row" type="button" data-url="https://github.com/ImMALWARE/bash-warp-generator">
+            <strong>bash-warp-generator</strong><span>MALWARE · генератор WARP</span><em>MIT</em>
           </button>
-          <button class="about-link" type="button" data-url="https://github.com/amnezia-vpn/amneziawg-windows-client">
-            <strong>AmneziaWG</strong><span>Amnezia VPN · туннель VPN · MIT, GPL-2.0</span>
+          <button class="credit-row" type="button" data-url="https://github.com/amnezia-vpn/amneziawg-windows-client">
+            <strong>AmneziaWG</strong><span>Amnezia VPN · туннель VPN</span><em>MIT, GPL-2.0</em>
           </button>
-          <button class="about-link" type="button" data-url="https://github.com/ViRb3/wgcf">
-            <strong>wgcf</strong><span>ViRb3 · регистрация WARP · MIT</span>
+          <button class="credit-row" type="button" data-url="https://github.com/ViRb3/wgcf">
+            <strong>wgcf</strong><span>ViRb3 · регистрация WARP</span><em>MIT</em>
           </button>
-          <button class="about-link" type="button" data-url="https://www.wintun.net/">
-            <strong>Wintun</strong><span>WireGuard LLC · сетевой адаптер</span>
-          </button>
-          <button class="about-link" type="button" data-url="https://github.com/tw1xtyq/skvoz/blob/main/THIRD_PARTY_NOTICES.md">
-            <strong>Все лицензии</strong><span>Полный список и условия</span>
+          <button class="credit-row" type="button" data-url="https://www.wintun.net/">
+            <strong>Wintun</strong><span>WireGuard LLC · сетевой адаптер</span><em></em>
           </button>
         </div>
       </section>

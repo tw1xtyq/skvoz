@@ -1219,10 +1219,10 @@ function showAppUpdateBanner(info: AppUpdateInfo | null): void {
 async function refreshAppVersionLine(): Promise<void> {
   try {
     const version = await api.getAppVersion();
-    els.appVersionLine.textContent = `Skvoz v${version}`;
+    els.appVersionLine.textContent = `Версия ${version}`;
     els.updAppVersion.textContent = `Skvoz v${version}`;
   } catch {
-    els.appVersionLine.textContent = 'Skvoz';
+    els.appVersionLine.textContent = '';
   }
 }
 

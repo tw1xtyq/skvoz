@@ -1,5 +1,5 @@
 const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
-const RIPPLE_TARGETS = '.btn, .about-link, .settings-tabs button';
+const RIPPLE_TARGETS = '.btn, .about-link, .credit-row, .settings-tabs button';
 const SPOTLIGHT_TARGETS = '.quick-control-item, .about-link';
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
