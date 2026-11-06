@@ -1,10 +1,11 @@
 {
   "name": "zapret-app",
-  "version": "1.11.4",
+  "version": "1.11.5",
   "description": "Skvoz — пульт для zapret и Telegram-прокси",
   "main": "dist/main/main.js",
   "author": "ProtheticGlitch",
   "license": "MIT",
+  "homepage": "https://tw1xtyq.github.io",
   "repository": {
     "type": "git",
     "url": "https://github.com/tw1xtyq/skvoz"

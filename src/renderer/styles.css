@@ -4581,3 +4581,97 @@ summary:focus-visible {
 /* внутри ячейки подсвечивается только сама ячейка, у кнопки своей плашки нет */
 .tool-cell .btn:hover:not(:disabled),
 .tool-cell .btn:active:not(:disabled) { background: none; border: 0; box-shadow: none; }
+
+/* ── Motion: разделы, вкладки, нажатия ── */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(var(--page-shift, 12px)) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Волна от нажатия: обрезает обёртка, а не сама кнопка */
+.ripple-host {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ripple-wave {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+}
+
+/* Вкладки настроек: одна плашка переезжает между ними */
+.settings-tabs button.is-current { border-color: transparent; background: transparent; }
+.settings-tab-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+}
+.settings-tab-pill.is-placed {
+  opacity: 1;
+  transition:
+    transform 0.42s var(--ease-out),
+    width 0.42s var(--ease-out),
+    height 0.42s var(--ease-out),
+    opacity var(--dur-fast) var(--ease);
+}
+
+/* Плитки и ссылки: мягкий свет идёт за курсором */
+.quick-control-item,
+.about-link { position: relative; }
+.quick-control-item::before,
+.about-link::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(220px circle at var(--spot-x, 50%) var(--spot-y, 50%), color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s var(--ease);
+}
+.quick-control-item:hover::before,
+.about-link:hover::before { opacity: 1; }
+.quick-control-item {
+  transition:
+    border-color var(--dur-med) var(--ease),
+    background var(--dur-med) var(--ease),
+    translate 0.4s var(--ease-out);
+}
+/* translate, а не transform: transform занят каскадом появления */
+.quick-control-item:hover { translate: 0 -2px; }
+
+/* Раскрытие: высоту ведёт motion.ts, содержимое проявляется следом */
+details[open] > :not(summary) { animation: details-fade 0.34s var(--ease-out) both; }
+@keyframes details-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Запуск обхода: круг расходится от кнопки */
+.power-wave {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96px;
+  height: 96px;
+  margin: -48px 0 0 -48px;
+  border: 2px solid var(--ok);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-control-item:hover { translate: none; }
+  .quick-control-item::before,
+  .about-link::before { display: none; }
+}

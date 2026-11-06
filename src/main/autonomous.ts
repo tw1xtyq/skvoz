@@ -9,6 +9,7 @@ import {
   type DownloadProgress,
 } from './downloader';
 import { scanForInstallations, type InstallCandidate, type ScanResult } from './scanner';
+import { compareVersions } from './version-utils';
 
 export type BootstrapStage =
   | 'scanning'
@@ -40,16 +41,6 @@ export function consumeFreshInstallMarker(appDir: string): boolean {
   if (!fs.existsSync(marker)) return false;
   fs.rmSync(marker, { force: true });
   return true;
-}
-
-function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
 }
 
 export async function runAutonomousBootstrap(

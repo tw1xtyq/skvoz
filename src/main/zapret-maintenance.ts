@@ -4,62 +4,20 @@ import os from 'os';
 import path from 'path';
 import { shell } from 'electron';
 import { assertAdmin } from './admin';
-import { httpFetch } from './http';
+import { describeNetworkError, httpFetch } from './http';
 import type { OutputCallback } from './diagnostics';
+import { saveIpsetList, switchIpsetFiles, type IpsetMode } from './ipset-files';
 import { shutdownZapretCompletely } from './uninstall';
 
-export type IpsetMode = 'loaded' | 'none' | 'any';
+export { hasIpsetBackup, isIpsetListMissing, readIpsetMode, type IpsetMode } from './ipset-files';
 
 const IPSET_URL =
   'https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/ipset-service.txt';
 const HOSTS_URL =
   'https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/refs/heads/main/.service/hosts';
-const PLACEHOLDER_IP = '203.0.113.113/32';
-
-export function readIpsetMode(listsDir: string): IpsetMode {
-  const listFile = path.join(listsDir, 'ipset-all.txt');
-  if (!fs.existsSync(listFile)) return 'any';
-
-  const content = fs.readFileSync(listFile, 'utf8').trim();
-  if (!content) return 'any';
-  if (content === PLACEHOLDER_IP) return 'none';
-  return 'loaded';
-}
-
 export function setIpsetMode(root: string, mode: IpsetMode): IpsetMode {
   assertAdmin();
-  const listsDir = path.join(root, 'lists');
-  const listFile = path.join(listsDir, 'ipset-all.txt');
-  const backupFile = `${listFile}.backup`;
-
-  fs.mkdirSync(listsDir, { recursive: true });
-  const current = readIpsetMode(listsDir);
-
-  if (mode === current) {
-    return current;
-  }
-
-  if (mode === 'none') {
-    if (fs.existsSync(listFile)) {
-      if (fs.existsSync(backupFile)) fs.unlinkSync(backupFile);
-      fs.renameSync(listFile, backupFile);
-    }
-    fs.writeFileSync(listFile, `${PLACEHOLDER_IP}\n`, 'utf8');
-  } else if (mode === 'any') {
-    fs.writeFileSync(listFile, '', 'utf8');
-  } else {
-    if (!fs.existsSync(backupFile)) {
-      throw new Error('Нет резервной копии IPSet. Сначала Update IPSet List (service.bat, п. 8).');
-    }
-    if (fs.existsSync(listFile)) fs.unlinkSync(listFile);
-    fs.renameSync(backupFile, listFile);
-  }
-
-  return readIpsetMode(listsDir);
-}
-
-export function hasIpsetBackup(listsDir: string): boolean {
-  return fs.existsSync(path.join(listsDir, 'ipset-all.txt.backup'));
+  return switchIpsetFiles(path.join(root, 'lists'), mode);
 }
 
 async function downloadText(url: string, timeoutMs = 20_000): Promise<string> {
@@ -79,7 +37,7 @@ async function downloadText(url: string, timeoutMs = 20_000): Promise<string> {
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('Превышено время ожидания загрузки. Проверьте интернет и повторите.');
     }
-    throw error;
+    throw new Error(describeNetworkError(error));
   } finally {
     clearTimeout(timer);
   }
@@ -87,19 +45,14 @@ async function downloadText(url: string, timeoutMs = 20_000): Promise<string> {
 
 export async function updateIpsetList(root: string, out?: OutputCallback): Promise<void> {
   assertAdmin();
-  const listsDir = path.join(root, 'lists');
-  const listFile = path.join(listsDir, 'ipset-all.txt');
-  const backupFile = `${listFile}.backup`;
-
   out?.({ text: 'Загрузка списка IPSet...', level: 'info' });
   const content = await downloadText(IPSET_URL);
 
-  fs.mkdirSync(listsDir, { recursive: true });
-  if (fs.existsSync(listFile) && readIpsetMode(listsDir) === 'loaded') {
-    fs.copyFileSync(listFile, backupFile);
-  }
-  fs.writeFileSync(listFile, content.replace(/\r?\n/g, '\n').trimEnd() + '\n', 'utf8');
-  out?.({ text: '[OK] lists/ipset-all.txt обновлён', level: 'success' });
+  const mode = saveIpsetList(path.join(root, 'lists'), content);
+  out?.({
+    text: mode === 'loaded' ? '[OK] Список IPSet обновлён' : '[OK] Список IPSet обновлён, режим фильтра не менялся',
+    level: 'success',
+  });
 }
 
 function systemHostsPath(): string {

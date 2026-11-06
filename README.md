@@ -4,10 +4,12 @@
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-blue) ![Release](https://img.shields.io/github/v/release/tw1xtyq/skvoz) ![Downloads](https://img.shields.io/github/downloads/tw1xtyq/skvoz/total) ![License](https://img.shields.io/badge/license-MIT-green)
 
+Сайт: **[tw1xtyq.github.io](https://tw1xtyq.github.io)**
+
 ## Скачать
 
-- [**Skvoz-Setup-1.11.4.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.4/Skvoz-Setup-1.11.4.exe) — установщик (рекомендуется)
-- [**Skvoz-1.11.4-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.4/Skvoz-1.11.4-Portable.exe) — без установки
+- [**Skvoz-Setup-1.11.5.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.5/Skvoz-Setup-1.11.5.exe) — установщик (рекомендуется)
+- [**Skvoz-1.11.5-Portable.exe**](https://github.com/tw1xtyq/skvoz/releases/download/v1.11.5/Skvoz-1.11.5-Portable.exe) — без установки
 
 Нужны Windows 10/11 x64 и права администратора. Все версии — на странице [Releases](https://github.com/tw1xtyq/skvoz/releases).
 

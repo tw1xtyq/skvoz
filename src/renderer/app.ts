@@ -10,6 +10,7 @@ import {
   setJournalTitle,
   type JournalLevel,
 } from './journal.js';
+import { initMotion, moveTabPill, playPowerWave } from './motion.js';
 import { confirmModal, formatUserError, initUi, showErrorModal, showInfoModal, toast } from './ui.js';
 import { enhanceSelect, type CustomSelectHandle } from './custom-select.js';
 import {
@@ -200,7 +201,7 @@ interface ZapretApi {
   cancelPickBestStrategy(): Promise<{ ok: boolean }>;
   completePostBootstrap(): Promise<{ ok: boolean }>;
   getProcessStatus(): Promise<{ ok: boolean }>;
-  checkUpdates(): Promise<{ current: string | null; latest: string | null; upToDate: boolean }>;
+  checkUpdates(): Promise<{ current: string | null; latest: string | null; upToDate: boolean; checkFailed: boolean }>;
   checkAppUpdate(): Promise<AppUpdateInfo>;
   getAppVersion(): Promise<string>;
   downloadAppUpdate(): Promise<{ stagingPath: string; version: string }>;
@@ -1410,6 +1411,7 @@ function updatePowerButton(running: boolean, animate = false): void {
   const nextIcon = running ? '■' : '▶';
   const nextLabel = running ? 'Стоп' : 'Старт';
   const stateChanged = lastPowerRunning !== null && lastPowerRunning !== running;
+  if (stateChanged && running) playPowerWave(els.btnToggle.parentElement);
 
   if (animate && stateChanged) {
     flashPowerState();
@@ -2145,6 +2147,7 @@ els.btnDismissAppUpdate.addEventListener('click', () => {
 });
 
 els.linkAppDocs.addEventListener('click', () => void api.openExternal('https://github.com/tw1xtyq/skvoz#readme'));
+document.getElementById('linkAppSite')?.addEventListener('click', () => void api.openExternal('https://tw1xtyq.github.io'));
 
 document.getElementById('creditLinks')?.addEventListener('click', (event) => {
   const link = (event.target as HTMLElement).closest<HTMLElement>('[data-url]');
@@ -2237,7 +2240,8 @@ els.ipsetModeSelect.addEventListener('change', () => {
       els.ipsetToggle.checked = result.ipset === 'loaded';
       els.ipsetModeSelect.value = result.ipset;
       ipsetCustomSelect?.rebuild();
-      toast(result.ipset === 'loaded' ? 'IPSet включён' : 'IPSet выключен', 'success');
+      const ipsetToasts = { loaded: 'IPSet включён', any: 'IPSet: любой IP', none: 'IPSet выключен' };
+      toast(ipsetToasts[result.ipset], 'success');
       await refreshStatus();
     } catch (err) {
       els.ipsetModeSelect.value = currentStatus?.settings.ipset ?? 'none';
@@ -2344,12 +2348,17 @@ els.btnCheckUpdates.addEventListener('click', () => {
     setBusy(true, 'Проверка версии');
     try {
       const [zapretUpdate, appUpdate] = await Promise.all([api.checkUpdates(), api.checkAppUpdate()]);
-      const zapretMessage = zapretUpdate.upToDate
-        ? `Zapret: последняя версия${zapretUpdate.current ? ` (${zapretUpdate.current})` : ''}.`
-        : `Zapret: доступна ${zapretUpdate.latest ?? '?'}, сейчас ${zapretUpdate.current ?? '?'}.`;
-      const appMessage = appUpdate.upToDate
-        ? `Skvoz: последняя версия (v${appUpdate.current}).`
-        : `Skvoz: доступна v${appUpdate.latest ?? '?'}, сейчас v${appUpdate.current}.`;
+      const noGithub = 'не удалось проверить — нет связи с GitHub.';
+      const zapretMessage = zapretUpdate.checkFailed
+        ? `Zapret: ${noGithub}`
+        : zapretUpdate.upToDate
+          ? `Zapret: последняя версия${zapretUpdate.current ? ` (${zapretUpdate.current})` : ''}.`
+          : `Zapret: доступна ${zapretUpdate.latest ?? '?'}, сейчас ${zapretUpdate.current ?? '?'}.`;
+      const appMessage = appUpdate.checkFailed
+        ? `Skvoz: ${noGithub}`
+        : appUpdate.upToDate
+          ? `Skvoz: последняя версия (v${appUpdate.current}).`
+          : `Skvoz: доступна v${appUpdate.latest ?? '?'}, сейчас v${appUpdate.current}.`;
       const message = `${appMessage}\n${zapretMessage}`;
 
       if (!appUpdate.upToDate && appUpdate.latest) {
@@ -2357,7 +2366,8 @@ els.btnCheckUpdates.addEventListener('click', () => {
       }
 
       showInfoModal('Проверка обновлений', message);
-      log(message.replace(/\n/g, ' '), appUpdate.upToDate && zapretUpdate.upToDate ? 'success' : 'info');
+      const allCurrent = appUpdate.upToDate && zapretUpdate.upToDate && !zapretUpdate.checkFailed;
+      log(message.replace(/\n/g, ' '), allCurrent ? 'success' : 'info');
     } catch (err) {
       reportFailure(err);
     } finally {
@@ -2414,6 +2424,7 @@ function moveNavIndicator(): void {
 }
 
 window.addEventListener('resize', moveNavIndicator);
+initMotion();
 
 function setActiveAppView(view: AppView): void {
   try {
@@ -2421,6 +2432,10 @@ function setActiveAppView(view: AppView): void {
   } catch {
     /* ignore */
   }
+  const order = Object.keys(APP_VIEW_TITLES);
+  const previous = order.indexOf(document.body.dataset.appView ?? view);
+  // Новый раздел приходит с той стороны, куда идём по меню
+  document.documentElement.style.setProperty('--page-shift', order.indexOf(view) < previous ? '-14px' : '14px');
   document.body.dataset.appView = view;
   document.querySelectorAll<HTMLElement>('.page').forEach((page) => {
     page.classList.toggle('is-active', page.dataset.page === view);
@@ -2475,6 +2490,7 @@ function selectSettingsTab(tab?: string | null, focus = false): void {
     button.tabIndex = active ? 0 : -1;
     document.getElementById(button.dataset.tab ?? '')?.classList.toggle('is-tab-active', active);
   }
+  moveTabPill();
   if (focus) target.focus();
   try {
     localStorage.setItem(SETTINGS_TAB_KEY, target.dataset.tab ?? '');

@@ -9,9 +9,10 @@ import { isTcpTimestampsEnabled, parseScState } from '../src/main/diagnostics';
 import { readBundledZapret } from '../src/main/downloader';
 import { runDetachedHidden } from '../src/main/exec';
 import { dropMissingInstalls, verifyInstallation } from '../src/main/scanner';
-import { parseGameFilterMode } from '../src/main/service-actions';
+import { gameFilterPorts, parseGameFilterMode, parseGameFilterRanges } from '../src/main/service-actions';
 import { isCdnDc, RepeatFilter, wsRoutes } from '../src/main/tgws/server';
 import { describeWinwsExit } from '../src/main/winws-errors';
+import { setGameFilter } from '../src/main/zapret';
 
 test('метка новой установки срабатывает один раз', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skvoz-fresh-'));
@@ -60,6 +61,38 @@ test('Game Filter понимает оба формата файла', () => {
   assert.equal(parseGameFilterMode('mode=tcp\r\ntcp=1024-65535\r\nudp=1024-65535\r\n'), 'tcp');
   assert.equal(parseGameFilterMode('mode=disabled\n'), 'disabled');
   assert.equal(parseGameFilterMode('мусор'), 'disabled');
+});
+
+test('Game Filter берёт порты из файла service.bat', () => {
+  const custom = 'mode=all\r\ntcp=5000-6000\r\nudp=7000,8000-9000\r\n';
+  assert.deepEqual(gameFilterPorts(custom), { tcp: '5000-6000', udp: '7000,8000-9000' });
+  assert.deepEqual(gameFilterPorts('mode=tcp\ntcp=5000\nudp=7000\n'), { tcp: '5000', udp: '12' });
+  assert.deepEqual(gameFilterPorts('mode=udp\ntcp=5000\nudp=7000\n'), { tcp: '12', udp: '7000' });
+  assert.deepEqual(gameFilterPorts('all'), { tcp: '1024-65535', udp: '1024-65535' });
+  assert.deepEqual(gameFilterPorts('mode=all\ntcp=1 & calc\nudp=\n'), { tcp: '1024-65535', udp: '1024-65535' });
+  assert.deepEqual(gameFilterPorts('mode=disabled\ntcp=5000\nudp=7000\n'), { tcp: '12', udp: '12' });
+  assert.deepEqual(gameFilterPorts(''), { tcp: '12', udp: '12' });
+});
+
+test('смена режима Game Filter не стирает диапазоны портов', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'skvoz-game-'));
+  const flagFile = path.join(root, 'utils', 'game_filter.enabled');
+  fs.mkdirSync(path.dirname(flagFile));
+  try {
+    setGameFilter(root, 'disabled');
+    assert.equal(fs.existsSync(flagFile), false);
+
+    setGameFilter(root, 'all');
+    assert.equal(fs.readFileSync(flagFile, 'utf8'), 'mode=all\r\ntcp=1024-65535\r\nudp=1024-65535\r\n');
+
+    fs.writeFileSync(flagFile, 'mode=all\r\ntcp=5000-6000\r\nudp=7000\r\n');
+    setGameFilter(root, 'disabled');
+    assert.equal(parseGameFilterMode(fs.readFileSync(flagFile, 'utf8')), 'disabled');
+    setGameFilter(root, 'udp');
+    assert.equal(fs.readFileSync(flagFile, 'utf8'), 'mode=udp\r\ntcp=5000-6000\r\nudp=7000\r\n');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Telegram: обычные DC идут и через закреплённый IP, и через DNS', () => {
@@ -168,4 +201,11 @@ test('readBundledZapret: архив есть только в сборке', () =
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('неверные диапазоны игрового фильтра заменяются стандартным', () => {
+  for (const bad of [',', '-', '1-2-3', '0', '70000', '6000-5000', '5000,']) {
+    assert.equal(parseGameFilterRanges(`mode=all\r\ntcp=${bad}\r\n`).tcp, '1024-65535', bad);
+  }
+  assert.equal(parseGameFilterRanges('tcp=80, 5000-6000\n').tcp, '80,5000-6000');
 });

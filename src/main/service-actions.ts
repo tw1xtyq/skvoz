@@ -25,17 +25,37 @@ export function parseGameFilterMode(content: string): 'disabled' | 'all' | 'tcp'
   return mode === 'all' || mode === 'tcp' || mode === 'udp' ? mode : 'disabled';
 }
 
+/** Те же правила, что :validate_game_filter_range в service.bat */
+function isValidPortRanges(value: string): boolean {
+  return value.split(',').every((item) => {
+    const match = item.match(/^([1-9]\d{0,4})(?:-([1-9]\d{0,4}))?$/);
+    if (!match) return false;
+    const end = Number(match[2] ?? match[1]);
+    return end <= 65535 && Number(match[1]) <= end;
+  });
+}
+
+/** Свои диапазоны портов задаются в service.bat; неверные заменяем стандартным, как он сам */
+export function parseGameFilterRanges(content: string): { tcp: string; udp: string } {
+  const read = (key: string): string => {
+    const value = content.match(new RegExp(`^${key}=(.*)$`, 'im'))?.[1].replace(/\s/g, '');
+    return value && isValidPortRanges(value) ? value : '1024-65535';
+  };
+  return { tcp: read('tcp'), udp: read('udp') };
+}
+
+export function gameFilterPorts(content: string): { tcp: string; udp: string } {
+  const mode = parseGameFilterMode(content);
+  const ranges = parseGameFilterRanges(content);
+  return {
+    tcp: mode === 'all' || mode === 'tcp' ? ranges.tcp : '12',
+    udp: mode === 'all' || mode === 'udp' ? ranges.udp : '12',
+  };
+}
+
 function readGameFilterPorts(root: string): { tcp: string; udp: string } {
   const flagFile = path.join(root, 'utils', 'game_filter.enabled');
-  const disabled = { tcp: '12', udp: '12' };
-
-  if (!fs.existsSync(flagFile)) return disabled;
-
-  const mode = parseGameFilterMode(fs.readFileSync(flagFile, 'utf8'));
-  if (mode === 'all') return { tcp: '1024-65535', udp: '1024-65535' };
-  if (mode === 'tcp') return { tcp: '1024-65535', udp: '12' };
-  if (mode === 'udp') return { tcp: '12', udp: '1024-65535' };
-  return disabled;
+  return gameFilterPorts(fs.existsSync(flagFile) ? fs.readFileSync(flagFile, 'utf8') : '');
 }
 
 function parseCommandLine(input: string): string[] {

@@ -13,6 +13,7 @@ import {
 } from './bypass-prep';
 import {
   parseGameFilterMode,
+  parseGameFilterRanges,
   startBypassHidden,
 } from './service-actions';
 import { fullRemoveZapretFromPc } from './uninstall';
@@ -528,11 +529,11 @@ export function pickBestStrategyForRoot(
 
 export function setGameFilter(root: string, mode: SettingsState['gameFilter']): void {
   const flagFile = path.join(root, 'utils', 'game_filter.enabled');
-  if (mode === 'disabled') {
-    if (fs.existsSync(flagFile)) fs.unlinkSync(flagFile);
-    return;
-  }
-  fs.writeFileSync(flagFile, mode, 'utf8');
+  const current = fs.existsSync(flagFile) ? fs.readFileSync(flagFile, 'utf8') : null;
+  if (mode === 'disabled' && current === null) return;
+  // Формат service.bat: диапазоны портов переживают смену режима
+  const { tcp, udp } = parseGameFilterRanges(current ?? '');
+  fs.writeFileSync(flagFile, `mode=${mode}\r\ntcp=${tcp}\r\nudp=${udp}\r\n`, 'utf8');
 }
 
 export function setCheckUpdates(root: string, enabled: boolean): void {
@@ -560,6 +561,7 @@ export async function checkForUpdates(root: string): Promise<{
   current: string | null;
   latest: string | null;
   upToDate: boolean;
+  checkFailed: boolean;
 }> {
   const current = readInstalledVersion(root);
   const latest = await fetchLatestVersion();
@@ -567,5 +569,6 @@ export async function checkForUpdates(root: string): Promise<{
     current,
     latest,
     upToDate: !latest || !current ? true : current === latest,
+    checkFailed: !latest,
   };
 }

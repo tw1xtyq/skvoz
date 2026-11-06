@@ -83,6 +83,7 @@ import {
   type SettingsState,
 } from './zapret';
 import {
+  isIpsetListMissing,
   listFakeBins,
   replaceActiveFake,
   removeWindowsServices,
@@ -2143,7 +2144,13 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('set-ipset-mode', async (_e, mode: IpsetMode) => {
-    const ipset = setIpsetModeForRoot(await requireZapretPath(), mode);
+    const root = await requireZapretPath();
+    if (mode === 'loaded' && isIpsetListMissing(path.join(root, 'lists'))) {
+      await updateIpsetList(root, (line) => sendToolOutput(line.text, line.level)).catch((error) => {
+        throw new Error(`Не удалось скачать список IPSet: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
+    const ipset = setIpsetModeForRoot(root, mode);
     invalidateStatusCache();
     return { ok: true, ipset };
   });

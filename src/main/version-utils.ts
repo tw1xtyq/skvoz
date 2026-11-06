@@ -5,7 +5,9 @@ export function compareVersions(a: string, b: string): number {
     const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
     if (diff !== 0) return diff;
   }
-  return 0;
+  // Буква — отдельный релиз zapret: 1.9.9 < 1.9.9a < 1.9.9d
+  const letter = (version: string): string => version.match(/\d([a-z])$/i)?.[1].toLowerCase() ?? '';
+  return letter(a).localeCompare(letter(b));
 }
 
 export function normalizeVersion(version: string): string {

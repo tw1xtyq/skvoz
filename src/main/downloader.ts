@@ -7,6 +7,7 @@ import path from 'path';
 import { decodeProcessOutput, runHidden } from './exec';
 import { removeDirectoryRobust } from './fs-remove';
 import { describeNetworkError, downloadWithRetry, httpFetch } from './http';
+import { readIpsetMode, switchIpsetFiles, type IpsetMode } from './ipset-files';
 import { ensureUserListFiles } from './user-lists';
 
 export const GITHUB_REPO = 'Flowseal/zapret-discord-youtube';
@@ -235,22 +236,47 @@ export function assertBinariesPresent(root: string): void {
   }
 }
 
-function backupUserFiles(sourceRoot: string): Map<string, Buffer> {
-  const backup = new Map<string, Buffer>();
+/** null — флага в utils не было: выключенная настройка не должна включиться из нового архива */
+export function backupUserFiles(sourceRoot: string): Map<string, Buffer | null> {
+  const backup = new Map<string, Buffer | null>();
   for (const relativePath of USER_FILES) {
     const fullPath = path.join(sourceRoot, relativePath);
     if (fs.existsSync(fullPath)) {
       backup.set(relativePath, fs.readFileSync(fullPath));
+    } else if (relativePath.startsWith('utils/')) {
+      backup.set(relativePath, null);
     }
   }
   return backup;
 }
 
-function restoreUserFiles(targetRoot: string, backup: Map<string, Buffer>): void {
+export function restoreUserFiles(targetRoot: string, backup: Map<string, Buffer | null>): void {
   for (const [relativePath, content] of backup) {
     const fullPath = path.join(targetRoot, relativePath);
+    if (content === null) {
+      fs.rmSync(fullPath, { force: true });
+      continue;
+    }
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, content);
+  }
+}
+
+function detectIpsetMode(root: string): IpsetMode | null {
+  try {
+    return readIpsetMode(path.join(root, 'lists'));
+  } catch {
+    return null;
+  }
+}
+
+/** Старая папка уже заменена, поэтому сбой здесь не должен срывать установку */
+export function restoreIpsetMode(root: string, mode: IpsetMode | null): void {
+  if (!mode) return;
+  try {
+    switchIpsetFiles(path.join(root, 'lists'), mode);
+  } catch {
+    /* останется режим из архива */
   }
 }
 
@@ -497,13 +523,14 @@ export function getDefaultInstallBase(): string {
 export function readInstalledVersion(root: string): string | null {
   if (!root || !fs.existsSync(root)) return null;
 
-  const folderMatch = path.basename(root).match(/zapret-discord-youtube-(\d+\.\d+\.\d+)/i);
+  // Буква — часть версии (1.9.9d): без неё автообновление каждый раз считало релиз новым
+  const folderMatch = path.basename(root).match(/zapret-discord-youtube-(\d+\.\d+\.\d+[a-z]?)/i);
   if (folderMatch) return folderMatch[1];
 
   const serviceBat = path.join(root, 'service.bat');
   if (fs.existsSync(serviceBat)) {
     const content = fs.readFileSync(serviceBat, 'utf8');
-    const match = content.match(/LOCAL_VERSION=(\d+\.\d+\.\d+)/i);
+    const match = content.match(/LOCAL_VERSION=(\d+\.\d+\.\d+[a-z]?)/i);
     if (match) return match[1];
   }
 
@@ -537,8 +564,10 @@ async function installFromZip(
   }
   assertBinariesPresent(extractedRoot);
 
-  const backup =
-    existingRoot && fs.existsSync(existingRoot) ? backupUserFiles(existingRoot) : new Map<string, Buffer>();
+  const hasExisting = !!existingRoot && fs.existsSync(existingRoot);
+  const backup = hasExisting ? backupUserFiles(existingRoot) : new Map<string, Buffer | null>();
+  // Читаем до замены: при переустановке той же версии старая папка уйдёт в .retired
+  const ipsetMode = hasExisting ? detectIpsetMode(existingRoot) : null;
 
   const stagingPath = path.join(tempDir, 'staging');
   report({ stage: 'install', percent: 25, message: 'Подготовка файлов...' });
@@ -549,6 +578,7 @@ async function installFromZip(
   report({ stage: 'install', percent: 75, message: 'Восстановление списков...' });
   restoreUserFiles(installPath, backup);
   ensureUserListFiles(installPath);
+  restoreIpsetMode(installPath, ipsetMode);
   await yieldToEventLoop();
 
   report({ stage: 'install', percent: 90, message: 'Разблокировка winws.exe...' });
