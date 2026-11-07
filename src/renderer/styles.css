@@ -4777,3 +4777,68 @@ body.tray-popup { gap: 8px; padding: 12px; background: var(--bg); }
 .tp-access .is-partial::before { background: var(--warn); }
 .tp-access .is-fail::before { background: var(--danger); }
 .tp-access .is-checking::before { background: var(--accent); }
+
+/* ── Трей: IPSet, игровой фильтр и «Починить» прямо в мини-окне ── */
+.tp-repair {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: -2px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  font-size: 0.75rem;
+  animation: rise-in 0.32s var(--ease-out) both;
+}
+.tp-repair.is-bad {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+.tp-repair span { flex: 1; min-width: 0; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+.tp-repair .btn { flex: 0 0 auto; padding: 0 14px; }
+
+.tp-tune {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--glass);
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.tp-tune.is-disabled { opacity: 0.5; }
+.tp-tune-row { display: flex; align-items: center; gap: 10px; }
+.tp-tune-label { flex: 0 0 44px; color: var(--muted); font-size: 0.75rem; font-weight: 600; }
+.tp-seg {
+  display: grid;
+  flex: 1;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+}
+.tp-seg button {
+  min-width: 0;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tp-seg button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.tp-seg button[aria-checked='true'] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.tp-seg button.is-pending { color: var(--accent); }
+.tp-seg button:disabled { cursor: default; }
+.tp-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bypass-history-list .is-info { color: var(--accent); }
+.bypass-activity-line #bypassActivityText { flex: 1; min-width: 0; }
+.bypass-activity-line #btnRecoverNow { flex: 0 0 auto; margin-left: auto; }

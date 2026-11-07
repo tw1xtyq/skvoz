@@ -147,6 +147,8 @@ interface ZapretApi {
       bypassAutoRecover?: boolean;
       bypassAutoSwitch?: boolean;
       backgroundRerank?: boolean;
+      gameMode?: boolean;
+      gameProcesses?: string[];
       probeSites?: string[];
       skipAutoBootstrap?: boolean;
     };
@@ -160,6 +162,8 @@ interface ZapretApi {
   setBypassAutoRecover(enabled: boolean): Promise<{ bypassAutoRecover: boolean }>;
   setBypassAutoSwitch(enabled: boolean): Promise<{ bypassAutoSwitch: boolean }>;
   setBackgroundRerank(enabled: boolean): Promise<{ backgroundRerank: boolean }>;
+  setGameMode(enabled: boolean): Promise<{ gameMode: boolean }>;
+  setGameProcesses(names: string[]): Promise<{ gameProcesses: string[]; rejected: string[] }>;
   setProbeSites(sites: string[]): Promise<{ probeSites: string[]; rejected: string[] }>;
   getBypassActivity(): Promise<BypassActivity>;
   saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }>;
@@ -172,10 +176,11 @@ interface ZapretApi {
   setStrategy(strategy: string): Promise<{ zapretPath: string; selectedStrategy: string | null }>;
   startBypass(): Promise<{ ok: boolean }>;
   stopBypass(): Promise<{ ok: boolean }>;
+  recoverBypassNow(): Promise<{ ok: boolean; health: BypassHealth }>;
   fullRemoveZapret(): Promise<{ ok: boolean; removedPaths: string[] }>;
-  setGameFilter(mode: string): Promise<{ ok: boolean }>;
+  setGameFilter(mode: string): Promise<{ ok: boolean; restarted?: boolean }>;
   toggleIpset(): Promise<{ ok: boolean; ipset: string }>;
-  setIpsetMode(mode: 'loaded' | 'any' | 'none'): Promise<{ ok: boolean; ipset: 'loaded' | 'any' | 'none' }>;
+  setIpsetMode(mode: 'loaded' | 'any' | 'none'): Promise<{ ok: boolean; ipset: 'loaded' | 'any' | 'none'; restarted?: boolean }>;
   updateIpsetList(): Promise<{ ok: boolean }>;
   updateHostsFile(): Promise<{ ok: boolean }>;
   removeZapretServices(): Promise<{ ok: boolean }>;
@@ -368,9 +373,12 @@ const els = {
   bypassAutoSwitchToggle: document.getElementById('bypassAutoSwitchToggle') as HTMLInputElement,
   backgroundRerankToggle: document.getElementById('backgroundRerankToggle') as HTMLInputElement,
   probeSitesInput: document.getElementById('probeSitesInput') as HTMLInputElement,
+  gameModeToggle: document.getElementById('gameModeToggle') as HTMLInputElement,
+  gameProcessesInput: document.getElementById('gameProcessesInput') as HTMLInputElement,
   bypassActivity: document.getElementById('bypassActivity')!,
   bypassHealthDot: document.getElementById('bypassHealthDot')!,
   bypassActivityText: document.getElementById('bypassActivityText')!,
+  btnRecoverNow: document.getElementById('btnRecoverNow') as HTMLButtonElement,
   bypassHistoryList: document.getElementById('bypassHistoryList')!,
   btnSaveReport: document.getElementById('btnSaveReport') as HTMLButtonElement,
   quickBypassMeta: document.getElementById('quickBypassMeta')!,
@@ -861,7 +869,6 @@ function updateAdminHint(status: StatusPayload | null): void {
 function setRuntimeLock(locked: boolean): void {
   const groups = [
     els.pathActionsGroup,
-    els.runtimeSettingsGroup,
     els.userListsGroup,
     els.configStrategyGroup,
     els.fullRemoveGroup,
@@ -870,7 +877,8 @@ function setRuntimeLock(locked: boolean): void {
     group.classList.toggle('runtime-locked', locked);
   }
   els.pathLockHint.classList.toggle('hidden', !locked);
-  els.settingsLockHint.classList.toggle('hidden', !locked);
+  // фильтры меняются и на ходу: Skvoz сам перезапускает обход
+  els.settingsLockHint.classList.add('hidden');
   els.listsLockHint.classList.toggle('hidden', !locked);
   els.updatesLockHint.classList.toggle('hidden', !locked);
   els.configLockHint.classList.toggle('hidden', !locked);
@@ -935,9 +943,9 @@ function updateControls(status: StatusPayload | null): void {
   }
 
   els.strategySelect.disabled = pickLocked || busy || !hasPath || runningLocked;
-  els.gameFilterSelect.disabled = pickLocked || busy || !hasPath || runningLocked;
-  els.ipsetToggle.disabled = pickLocked || busy || !hasPath || runningLocked;
-  els.ipsetModeSelect.disabled = pickLocked || busy || !hasPath || runningLocked;
+  els.gameFilterSelect.disabled = pickLocked || busy || !hasPath;
+  els.ipsetToggle.disabled = pickLocked || busy || !hasPath;
+  els.ipsetModeSelect.disabled = pickLocked || busy || !hasPath;
   els.btnUpdateIpset.disabled = pickLocked || busy || !hasPath || runningLocked;
   els.btnUpdateHosts.disabled = pickLocked || busy || !hasPath;
   els.btnRemoveServices.disabled = pickLocked || busy || !isAdminUser;
@@ -959,6 +967,8 @@ function updateControls(status: StatusPayload | null): void {
   // переключение работает только внутри автовосстановления
   els.bypassAutoSwitchToggle.disabled = pickLocked || !els.bypassAutoRecoverToggle.checked;
   els.backgroundRerankToggle.disabled = pickLocked;
+  els.gameModeToggle.disabled = pickLocked;
+  els.gameProcessesInput.disabled = pickLocked || !els.gameModeToggle.checked;
   els.btnRestartAdmin.disabled = pickLocked || busy;
   els.btnCancelStrategyPick.disabled = !pickLocked;
   els.btnQuickBypass.disabled = pickLocked || busy || (hasPath && (running ? false : !canStart));
@@ -1020,8 +1030,10 @@ function syncCustomSelectsDisabled(status: StatusPayload | null): void {
   const runningLocked = !!status?.bypass.running && hasPath;
   const disabled = strategyPickActive || busy || !hasPath || runningLocked;
   strategyCustomSelect?.setDisabled(disabled);
-  gameFilterCustomSelect?.setDisabled(disabled);
-  ipsetCustomSelect?.setDisabled(disabled);
+  // фильтры меняются и при работающем обходе — его перезапустят
+  const filtersDisabled = strategyPickActive || busy || !hasPath;
+  gameFilterCustomSelect?.setDisabled(filtersDisabled);
+  ipsetCustomSelect?.setDisabled(filtersDisabled);
   userListCustomSelect?.setDisabled(disabled);
 }
 
@@ -1691,6 +1703,9 @@ interface BypassActivity {
   network: string;
   since: { at: number; strategy: string | null } | null;
   events: { at: number; kind: string; text: string; strategy?: string | null }[];
+  retryAt?: number | null;
+  canRecover?: boolean;
+  game?: string | null;
 }
 
 const HEALTH_DOT_CLASS: Partial<Record<BypassHealth, string>> = {
@@ -1701,9 +1716,11 @@ const HEALTH_DOT_CLASS: Partial<Record<BypassHealth, string>> = {
 };
 
 const EVENT_TONE: Record<string, string> = {
+  game: 'is-info',
   crashed: 'is-warn',
   blocked: 'is-warn',
   'gave-up': 'is-bad',
+  retry: 'is-warn',
   restored: 'is-ok',
   switched: 'is-ok',
 };
@@ -1733,9 +1750,17 @@ async function refreshBypassActivity(running = lastBypassRunning): Promise<void>
     parts.push(since ? `Работает${strategy ? ` на ${strategy}` : ''} с ${formatEventTime(since.at)}` : 'Работает');
     parts.push(activity.healthLabel);
   } else if (activity.health === 'down') {
-    parts.push('Обход остановился: рабочий конфиг не найден');
+    parts.push(
+      activity.retryAt
+        ? `Рабочий конфиг не найден — попробую снова в ${formatEventTime(activity.retryAt)}`
+        : 'Обход остановился: рабочий конфиг не найден'
+    );
   }
+  if (activity.game) parts.push(`игровой режим: ${activity.game}`);
   parts.push(`сеть: ${activity.network}`);
+  const canRepair =
+    !!activity.canRecover && (activity.health === 'down' || (running && activity.health === 'degraded'));
+  els.btnRecoverNow.classList.toggle('hidden', !canRepair);
   els.bypassActivityText.textContent = parts.join(' · ');
   els.bypassHealthDot.className = `health-dot ${running || activity.health === 'down' ? HEALTH_DOT_CLASS[activity.health] ?? '' : ''}`;
 
@@ -1776,6 +1801,11 @@ async function refreshStatus(full = true): Promise<void> {
     els.backgroundRerankToggle.checked = config.backgroundRerank !== false;
     if (document.activeElement !== els.probeSitesInput) {
       els.probeSitesInput.value = (config.probeSites ?? []).join(', ');
+    }
+    els.gameModeToggle.checked = config.gameMode !== false;
+    els.gameProcessesInput.disabled ||= !els.gameModeToggle.checked;
+    if (document.activeElement !== els.gameProcessesInput) {
+      els.gameProcessesInput.value = (config.gameProcesses ?? []).join(', ');
     }
     showOfficialWarning(status);
     void refreshBypassActivity(status.bypass.running);
@@ -2211,7 +2241,11 @@ els.strategySelect.addEventListener('change', async () => {
   }
 });
 els.gameFilterSelect.addEventListener('change', async () => {
-  if (!(await runAction('Фильтр', () => api.setGameFilter(els.gameFilterSelect.value)))) {
+  const applied = await runAction('Фильтр', async () => {
+    const result = await api.setGameFilter(els.gameFilterSelect.value);
+    if (result.restarted) toast('Игровой фильтр применён — обход перезапущен', 'success');
+  });
+  if (!applied) {
     els.gameFilterSelect.value = currentStatus?.settings.gameFilter ?? els.gameFilterSelect.value;
     gameFilterCustomSelect?.rebuild();
   }
@@ -2241,7 +2275,7 @@ els.ipsetModeSelect.addEventListener('change', () => {
       els.ipsetModeSelect.value = result.ipset;
       ipsetCustomSelect?.rebuild();
       const ipsetToasts = { loaded: 'IPSet включён', any: 'IPSet: любой IP', none: 'IPSet выключен' };
-      toast(ipsetToasts[result.ipset], 'success');
+      toast(`${ipsetToasts[result.ipset]}${result.restarted ? ' — обход перезапущен' : ''}`, 'success');
       await refreshStatus();
     } catch (err) {
       els.ipsetModeSelect.value = currentStatus?.settings.ipset ?? 'none';
@@ -2301,6 +2335,21 @@ bindSettingToggle(els.bypassAutoSwitchToggle, 'Переключение конф
 bindSettingToggle(els.backgroundRerankToggle, 'Перепроверка в простое', (checked) =>
   api.setBackgroundRerank(checked)
 );
+els.gameModeToggle.addEventListener('change', () => {
+  els.gameProcessesInput.disabled = !els.gameModeToggle.checked;
+});
+bindSettingToggle(els.gameModeToggle, 'Игровой режим', (checked) => api.setGameMode(checked));
+els.gameProcessesInput.addEventListener('change', async () => {
+  const names = els.gameProcessesInput.value.split(/[,;\n]+/).map((n) => n.trim()).filter(Boolean);
+  try {
+    const result = await api.setGameProcesses(names);
+    els.gameProcessesInput.value = result.gameProcesses.join(', ');
+    if (result.rejected.length > 0) toast(`Не похоже на exe: ${result.rejected.join(', ')}`, 'info');
+    else toast(result.gameProcesses.length > 0 ? 'Список игр сохранён' : 'Только встроенный список игр', 'success');
+  } catch (err) {
+    reportFailure(err);
+  }
+});
 els.probeSitesInput.addEventListener('change', async () => {
   const sites = els.probeSitesInput.value.split(/[,\s]+/).filter(Boolean);
   try {
@@ -2310,6 +2359,18 @@ els.probeSitesInput.addEventListener('change', async () => {
     else toast(result.probeSites.length > 0 ? 'Сайты для проверки сохранены' : 'Проверка по YouTube и Discord', 'success');
   } catch (err) {
     reportFailure(err);
+  }
+});
+els.btnRecoverNow.addEventListener('click', async () => {
+  els.btnRecoverNow.disabled = true;
+  try {
+    await api.recoverBypassNow();
+    toast('Восстанавливаю обход…', 'info');
+  } catch (err) {
+    reportFailure(err, 'Восстановление');
+  } finally {
+    els.btnRecoverNow.disabled = false;
+    void refreshBypassActivity();
   }
 });
 els.btnSaveReport.addEventListener('click', async () => {

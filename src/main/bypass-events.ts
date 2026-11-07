@@ -9,7 +9,9 @@ export type BypassEventKind =
   | 'restored'
   | 'switched'
   | 'gave-up'
+  | 'retry'
   | 'network'
+  | 'game'
   | 'rerank'
   | 'update';
 
@@ -57,9 +59,13 @@ export class BypassEventLog {
 
   /** С какого момента и на каком конфиге обход работает без остановок */
   runningSince(): { at: number; strategy: string | null } | null {
+    // сторож сдавался, но потом сам поднял обход — считаем с этого момента
+    let revived: BypassEvent | null = null;
     for (let i = this.events.length - 1; i >= 0; i -= 1) {
       const event = this.events[i];
-      if (event.kind === 'stopped' || event.kind === 'gave-up') return null;
+      if (event.kind === 'stopped') return null;
+      if (event.kind === 'gave-up') return revived ? { at: revived.at, strategy: revived.strategy ?? null } : null;
+      if (event.kind === 'restored' && !revived) revived = event;
       if (event.kind === 'started' || event.kind === 'switched') {
         return { at: event.at, strategy: event.strategy ?? null };
       }

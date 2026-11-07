@@ -26,6 +26,31 @@
     </label>
   </div>
 
+  <div class="tp-repair hidden" id="tpRepair">
+    <span id="tpRepairText">Сайты не открываются</span>
+    <button class="btn btn-soft btn-sm" id="tpRepairBtn" type="button">Починить</button>
+  </div>
+
+  <div class="tp-tune" id="tpTune">
+    <div class="tp-tune-row">
+      <span class="tp-tune-label" title="Какие IP обход пропускает через себя">IPSet</span>
+      <div class="tp-seg" id="tpIpset" role="radiogroup" aria-label="Режим IPSet">
+        <button type="button" role="radio" data-value="loaded" title="Только адреса из списка ipset">Список</button>
+        <button type="button" role="radio" data-value="any" title="Любой IP — шире, но нагружает сильнее">Любой</button>
+        <button type="button" role="radio" data-value="none" title="IPSet выключен">Выкл</button>
+      </div>
+    </div>
+    <div class="tp-tune-row">
+      <span class="tp-tune-label" title="Обход для игровых портов">Игры</span>
+      <div class="tp-seg" id="tpGame" role="radiogroup" aria-label="Игровой фильтр">
+        <button type="button" role="radio" data-value="disabled" title="Игровой фильтр выключен">Выкл</button>
+        <button type="button" role="radio" data-value="all" title="TCP и UDP">Все</button>
+        <button type="button" role="radio" data-value="tcp" title="Только TCP">TCP</button>
+        <button type="button" role="radio" data-value="udp" title="Только UDP">UDP</button>
+      </div>
+    </div>
+  </div>
+
   <div class="tp-row" id="tpTg">
     <span class="tp-dot" aria-hidden="true"></span>
     <div class="tp-copy">

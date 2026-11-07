@@ -37,6 +37,7 @@ import {
 } from './tests-runner';
 import { normalizeProbeSite, pickProbeUrls, probeBypassTargets } from './bypass-health';
 import { BypassEventLog, type BypassEventKind } from './bypass-events';
+import { GameDetector, gameLabel, normalizeGameProcess, parseTasklistNames } from './game-detector';
 import { BackgroundRerank, hasDisplayRequests } from './background-rerank';
 import { buildDiagnosticReport, type LogLine } from './diagnostic-report';
 import { loadLogProblems, saveLogProblems } from './tool-log';
@@ -136,9 +137,20 @@ interface TrayMenuState {
   canStart: boolean;
   strategy: string | null;
   strategies: string[];
+  gameFilter: SettingsState['gameFilter'] | null;
+  ipset: IpsetMode | null;
 }
 
-let trayMenuState: TrayMenuState = { running: false, canStart: false, strategy: null, strategies: [] };
+let trayMenuState: TrayMenuState = {
+  running: false,
+  canStart: false,
+  strategy: null,
+  strategies: [],
+  gameFilter: null,
+  ipset: null,
+};
+/** Идёт смена IPSet или игрового фильтра с перезапуском обхода — сторож ждёт */
+let bypassSettingRestartRunning = false;
 let trayMenuStateAt = 0;
 
 const TRAY_MENU_CACHE_MS = 10_000;
@@ -316,14 +328,38 @@ function resolveProbeUrls(root: string, strategy: string): string[] {
 }
 
 function isBypassAutomationBusy(): boolean {
-  return autoPickBestStrategyRunning || backgroundRerank.isRunning || zapretUpdateRunning;
+  return autoPickBestStrategyRunning || backgroundRerank.isRunning || zapretUpdateRunning || bypassSettingRestartRunning;
 }
 
 let lastProbeFailedHosts: string[] = [];
 
+const gameDetector: GameDetector = new GameDetector({
+  intervalMs: 20_000,
+  // следим только за работающим обходом: выключенному игровой режим не нужен
+  isEnabled: (): boolean => config.gameMode !== false && bypassWatchdog.currentHealth !== 'off',
+  customProcesses: () => config.gameProcesses,
+  listProcesses: async () => {
+    const output = await capture('tasklist.exe', ['/FO', 'CSV', '/NH']);
+    return output === null ? null : parseTasklistNames(output);
+  },
+  onChange: (game, previous) => {
+    if (game) {
+      logBypassEvent('game', `Игровой режим: ${gameLabel(game)}`);
+      sendToolOutput(`Запущена ${gameLabel(game)} — игровой режим: сайты проверяю раз в 5 минут, конфиги не перебираю`, 'info');
+    } else {
+      if (previous) logBypassEvent('game', `Игровой режим завершён: ${gameLabel(previous)}`);
+      sendToolOutput('Игровой режим завершён — обычные проверки обхода', 'info');
+      bypassWatchdog.gameEnded();
+    }
+    rebuildTrayMenu();
+  },
+});
+
 const bypassWatchdog = new BypassWatchdog({
   intervalMs: 8_000,
   healthCheckIntervalMs: 30_000,
+  gameHealthCheckIntervalMs: 5 * 60_000,
+  isGameMode: (): boolean => gameDetector.current !== null,
   maxAttempts: 8,
   restartsBeforeSwitch: 2,
   maxFallbacks: 4,
@@ -395,10 +431,15 @@ const bypassWatchdog = new BypassWatchdog({
     mainWindow?.webContents.send('bypass-auto-started');
     void refreshTrayMenu(true);
   },
-  onGiveUp: () => {
+  onGiveUp: (retryAt) => {
     invalidateStatusCache();
     mainWindow?.webContents.send('bypass-watchdog-stopped');
-    notify('Обход остановился', 'Рабочий конфиг не найден. Откройте приложение, чтобы проверить настройки.');
+    notify(
+      'Обход не работает',
+      retryAt
+        ? `Рабочий конфиг не найден. Попробую снова в ${formatClock(retryAt)} — или нажмите «Починить» в трее.`
+        : 'Рабочий конфиг не найден. Откройте приложение, чтобы проверить настройки.'
+    );
     void refreshTrayMenu(true);
   },
   onEvent: (event) => logBypassEvent(event.kind, event.text, event.strategy),
@@ -417,6 +458,8 @@ const backgroundRerank = new BackgroundRerank({
     !zapretUpdateRunning &&
     !bypassWatchdog.isRecovering &&
     !['off', 'down'].includes(bypassWatchdog.currentHealth) &&
+    // с геймпадом мышь не трогают, и Windows считает компьютер простаивающим
+    gameDetector.current === null &&
     !powerMonitor.isOnBatteryPower(),
   getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
   isUserWatching: async () => {
@@ -600,6 +643,9 @@ async function saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }
       backgroundRerank: config.backgroundRerank,
       autoUpdateZapret: config.autoUpdateZapret,
       probeSites: config.probeSites,
+      gameMode: config.gameMode,
+      gameProcesses: config.gameProcesses,
+      gameRunning: gameDetector.current,
       bypassStoppedByUser: config.bypassStoppedByUser,
       tgProxyRunning: tgwsProxy.isRunning(),
       tgProxyStats: tgwsProxy.getStats(),
@@ -644,6 +690,7 @@ function updateTrayIcon(): void {
 
 function initBypassAutomation(): void {
   bypassWatchdog.start();
+  gameDetector.start();
   powerMonitor.on('resume', () => {
     bypassWatchdog.deferHealthCheck(30_000);
     networkFingerprint = '';
@@ -655,6 +702,7 @@ function initBypassAutomation(): void {
 
 function stopBypassAutomation(): void {
   bypassWatchdog.stop();
+  gameDetector.stop();
   backgroundRerank.stop();
   if (networkTimer) {
     clearInterval(networkTimer);
@@ -1023,7 +1071,7 @@ function scheduleTraySync(): void {
 
 // ── Мини-окно у трея ──────────────────────────────────────────────────
 
-const TRAY_WINDOW_SIZE = { width: 330, height: 408 };
+const TRAY_WINDOW_SIZE = { width: 330, height: 516 };
 let trayWindow: BrowserWindow | null = null;
 let trayWindowHiddenAt = 0;
 
@@ -1134,6 +1182,8 @@ async function refreshTrayMenu(force = false): Promise<void> {
     let canStart = false;
     let strategy: string | null = null;
     let strategies: string[] = [];
+    let gameFilter: SettingsState['gameFilter'] | null = null;
+    let ipset: IpsetMode | null = null;
 
     try {
       const zapretPath = getKnownZapretPath();
@@ -1143,6 +1193,10 @@ async function refreshTrayMenu(force = false): Promise<void> {
         running = status.bypass.running;
         strategy = config.selectedStrategy ?? status.selectedStrategy;
         strategies = status.strategies;
+        if (status.pathsValid) {
+          gameFilter = status.settings.gameFilter;
+          ipset = status.settings.ipset;
+        }
         if (!running) {
           canStart =
             isWindowsAdmin() &&
@@ -1155,7 +1209,7 @@ async function refreshTrayMenu(force = false): Promise<void> {
       /* keep menu usable */
     }
 
-    trayMenuState = { running, canStart, strategy, strategies };
+    trayMenuState = { running, canStart, strategy, strategies, gameFilter, ipset };
     trayMenuStateAt = Date.now();
   }
 
@@ -1171,7 +1225,7 @@ function rebuildTrayMenu(): void {
 }
 
 function buildTrayMenu(): Menu {
-  const { running, canStart, strategy, strategies } = trayMenuState;
+  const { running, canStart, strategy, strategies, gameFilter, ipset } = trayMenuState;
   const tgRunning = tgwsProxy.isRunning();
   const tg = tgwsProxy.getConfig();
   const vpnRunning = amneziaVpn.isRunning();
@@ -1180,8 +1234,30 @@ function buildTrayMenu(): Menu {
   const since = running ? bypassEvents.runningSince() : null;
   const automationBusy = isBypassAutomationBusy() || bypassWatchdog.isRecovering;
 
-  const bypassState = running ? HEALTH_LABEL[health] : 'выключен';
+  const retryAt = bypassWatchdog.nextRetryAt;
+  const bypassState =
+    health === 'down'
+      ? `не работает${retryAt ? ` · повтор в ${formatClock(retryAt)}` : ''}`
+      : running ? HEALTH_LABEL[health] : 'выключен';
+  const canRepair =
+    !automationBusy && (health === 'down' || health === 'degraded') && config.bypassAutoRecover !== false;
+  const settingsReady = gameFilter !== null && ipset !== null && !automationBusy;
+  const ipsetItems: Electron.MenuItemConstructorOptions[] = IPSET_CHOICES.map(({ mode, label }) => ({
+    label,
+    type: 'radio',
+    checked: ipset === mode,
+    enabled: settingsReady,
+    click: () => void traySetIpset(mode),
+  }));
+  const gameFilterItems: Electron.MenuItemConstructorOptions[] = GAME_FILTER_CHOICES.map(({ mode, label }) => ({
+    label,
+    type: 'radio',
+    checked: gameFilter === mode,
+    enabled: settingsReady,
+    click: () => void traySetGameFilter(mode),
+  }));
   const networkLine = [
+    gameDetector.current ? `игровой режим · ${gameLabel(gameDetector.current)}` : null,
     currentNetwork.id !== UNKNOWN_NETWORK.id ? currentNetwork.label : null,
     since ? `работает с ${formatClock(since.at)}` : null,
   ].filter(Boolean).join(' · ');
@@ -1204,11 +1280,22 @@ function buildTrayMenu(): Menu {
     running
       ? { label: 'Выключить обход', click: () => void traySetBypass(false) }
       : { label: 'Включить обход', enabled: canStart, click: () => void traySetBypass(true) },
+    ...(canRepair ? [{ label: 'Починить обход сейчас', click: () => void trayRecoverNow() }] : []),
     { label: 'Перезапустить обход', enabled: running && !automationBusy, click: () => void trayRestartBypass() },
     {
       label: `Конфиг: ${strategy ? strategyLabel(strategy) : 'не выбран'}`,
       enabled: strategies.length > 0,
       submenu: strategyItems,
+    },
+    {
+      label: `IPSet: ${ipset ? IPSET_SHORT[ipset] : '—'}`,
+      enabled: ipset !== null,
+      submenu: ipsetItems,
+    },
+    {
+      label: `Игровой фильтр: ${gameFilter ? GAME_FILTER_SHORT[gameFilter] : '—'}`,
+      enabled: gameFilter !== null,
+      submenu: gameFilterItems,
     },
     { type: 'separator' },
     { label: `Telegram-прокси: ${tgRunning ? `работает · ${tg.host}:${tg.port}` : 'выключен'}`, enabled: false },
@@ -1276,6 +1363,149 @@ async function trayChooseStrategy(strategy: string): Promise<void> {
     notify('Конфиг не сменился', message);
   } finally {
     await refreshTrayMenu(true);
+  }
+}
+
+const IPSET_CHOICES: Array<{ mode: IpsetMode; label: string }> = [
+  { mode: 'loaded', label: 'По списку — только адреса из ipset' },
+  { mode: 'any', label: 'Любой IP — шире, но медленнее' },
+  { mode: 'none', label: 'Выключен' },
+];
+const IPSET_SHORT: Record<IpsetMode, string> = { loaded: 'по списку', any: 'любой IP', none: 'выключен' };
+
+const GAME_FILTER_CHOICES: Array<{ mode: SettingsState['gameFilter']; label: string }> = [
+  { mode: 'disabled', label: 'Выключен' },
+  { mode: 'all', label: 'TCP и UDP' },
+  { mode: 'tcp', label: 'Только TCP' },
+  { mode: 'udp', label: 'Только UDP' },
+];
+const GAME_FILTER_SHORT: Record<SettingsState['gameFilter'], string> = {
+  disabled: 'выключен',
+  all: 'TCP и UDP',
+  tcp: 'TCP',
+  udp: 'UDP',
+};
+
+/**
+ * IPSet и игровой фильтр winws читает только при запуске: меняем файл и,
+ * если обход работает, сразу перезапускаем его с тем же конфигом — иначе
+ * настройка молча не действует до следующего включения.
+ */
+async function applyBypassSetting<T>(
+  label: string,
+  steps: {
+    /** значение уже такое — ничего не трогаем и winws не перезапускаем */
+    current: (settings: SettingsState) => T | null;
+    /** долгая подготовка (скачать список) — пока обход ещё работает */
+    prepare?: (root: string) => Promise<void>;
+    apply: (root: string) => Promise<T> | T;
+  }
+): Promise<{ result: T; restarted: boolean }> {
+  if (autoPickBestStrategyRunning || zapretUpdateRunning || bypassWatchdog.isRecovering || bypassSettingRestartRunning) {
+    throw new Error('Сейчас идёт подбор или восстановление — попробуйте через минуту');
+  }
+  await waitForBackgroundRerank();
+  bypassSettingRestartRunning = true;
+  try {
+    const root = await requireZapretPath();
+    const before = await getStatus(root, { fresh: true, light: true });
+    const unchanged = before.pathsValid ? steps.current(before.settings) : null;
+    if (unchanged !== null) return { result: unchanged, restarted: false };
+
+    await steps.prepare?.(root);
+    const strategy = config.selectedStrategy ?? before.selectedStrategy;
+    const restart = before.bypass.running && !!strategy && before.strategies.includes(strategy);
+    if (!restart || !strategy) {
+      const result = await steps.apply(root);
+      invalidateStatusCache();
+      return { result, restarted: false };
+    }
+
+    // winws может держать файлы списков: меняем их при остановленном обходе
+    const log = (line: { text: string; level: string }): void => sendToolOutput(line.text, line.level);
+    sendToolOutput(`${label}: перезапускаю обход, чтобы применить`, 'info');
+    await stopBypass(log);
+    await delay(600);
+    let result: T;
+    try {
+      result = await steps.apply(root);
+    } finally {
+      // не вышло сменить — всё равно возвращаем обход, со старой настройкой
+      invalidateStatusCache();
+      await startBypass(root, strategy, log);
+    }
+    if (!(await waitForBypassRunning())) {
+      // сторож поднимет обход сам, как только освободится
+      throw new Error('Настройка сохранена, но winws.exe не запустился заново');
+    }
+    bypassWatchdog.setExpected(true);
+    logBypassEvent('started', `${label} — обход перезапущен`, strategy);
+    invalidateStatusCache();
+    return { result, restarted: true };
+  } finally {
+    bypassSettingRestartRunning = false;
+    mainWindow?.webContents.send('bypass-auto-started');
+    void refreshTrayMenu(true);
+  }
+}
+
+function changeIpsetMode(mode: IpsetMode): Promise<{ result: SettingsState['ipset']; restarted: boolean }> {
+  if (!IPSET_SHORT[mode]) return Promise.reject(new Error(`Неизвестный режим IPSet: ${mode}`));
+  return applyBypassSetting(`IPSet: ${IPSET_SHORT[mode]}`, {
+    current: (settings) => (settings.ipset === mode ? settings.ipset : null),
+    prepare: async (root) => {
+      if (mode !== 'loaded' || !isIpsetListMissing(path.join(root, 'lists'))) return;
+      await updateIpsetList(root, (line) => sendToolOutput(line.text, line.level)).catch((error) => {
+        throw new Error(`Не удалось скачать список IPSet: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    },
+    apply: (root) => setIpsetModeForRoot(root, mode),
+  });
+}
+
+function changeGameFilter(mode: SettingsState['gameFilter']): Promise<{ result: SettingsState['gameFilter']; restarted: boolean }> {
+  if (!GAME_FILTER_SHORT[mode]) return Promise.reject(new Error(`Неизвестный режим фильтра: ${mode}`));
+  return applyBypassSetting(`Игровой фильтр: ${GAME_FILTER_SHORT[mode]}`, {
+    current: (settings) => (settings.gameFilter === mode ? mode : null),
+    apply: (root) => {
+      setGameFilter(root, mode);
+      return mode;
+    },
+  });
+}
+
+async function traySetIpset(mode: IpsetMode): Promise<void> {
+  try {
+    const { restarted } = await changeIpsetMode(mode);
+    sendToolOutput(`[OK] IPSet: ${IPSET_SHORT[mode]}${restarted ? ' — обход перезапущен' : ''}`, 'success');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Ошибка: ${message}`, 'warn');
+    notify('IPSet не сменился', message);
+  }
+}
+
+async function traySetGameFilter(mode: SettingsState['gameFilter']): Promise<void> {
+  try {
+    const { restarted } = await changeGameFilter(mode);
+    sendToolOutput(`[OK] Игровой фильтр: ${GAME_FILTER_SHORT[mode]}${restarted ? ' — обход перезапущен' : ''}`, 'success');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Ошибка: ${message}`, 'warn');
+    notify('Игровой фильтр не сменился', message);
+  }
+}
+
+async function trayRecoverNow(): Promise<void> {
+  try {
+    await bypassWatchdog.recoverNow();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendToolOutput(`Ошибка: ${message}`, 'warn');
+    notify('Обход не починился', message);
+  } finally {
+    invalidateStatusCache();
+    void refreshTrayMenu(true);
   }
 }
 
@@ -1814,6 +2044,27 @@ function registerIpc(): void {
     return { bypassAutoSwitch: config.bypassAutoSwitch };
   });
 
+  ipcMain.handle('set-game-mode', async (_e, enabled: boolean) => {
+    config.gameMode = !!enabled;
+    saveConfig(config);
+    await gameDetector.poll();
+    emitBypassActivity();
+    return { gameMode: config.gameMode };
+  });
+
+  ipcMain.handle('set-game-processes', async (_e, names: unknown) => {
+    const raw = Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string') : [];
+    const valid = raw.map(normalizeGameProcess).filter((n): n is string => !!n);
+    config.gameProcesses = [...new Set(valid)].slice(0, 30);
+    saveConfig(config);
+    await gameDetector.poll();
+    emitBypassActivity();
+    return {
+      gameProcesses: config.gameProcesses,
+      rejected: raw.filter((n) => n.trim() && !normalizeGameProcess(n)),
+    };
+  });
+
   ipcMain.handle('set-background-rerank', (_e, enabled: boolean) => {
     config.backgroundRerank = !!enabled;
     saveConfig(config);
@@ -1831,6 +2082,9 @@ function registerIpc(): void {
   ipcMain.handle('get-bypass-activity', () => ({
     health: bypassWatchdog.currentHealth,
     healthLabel: HEALTH_LABEL[bypassWatchdog.currentHealth],
+    retryAt: bypassWatchdog.nextRetryAt,
+    game: gameDetector.current ? gameLabel(gameDetector.current) : null,
+    canRecover: config.bypassAutoRecover !== false && !isBypassAutomationBusy() && !bypassWatchdog.isRecovering,
     network: currentNetwork.label,
     since: bypassEvents.runningSince(),
     events: bypassEvents.list(15),
@@ -2132,9 +2386,8 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('set-game-filter', async (_e, mode: SettingsState['gameFilter']) => {
-    setGameFilter(await requireZapretPath(), mode);
-    invalidateStatusCache();
-    return { ok: true };
+    const { restarted } = await changeGameFilter(mode);
+    return { ok: true, restarted };
   });
 
   ipcMain.handle('toggle-ipset', async () => {
@@ -2144,15 +2397,25 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('set-ipset-mode', async (_e, mode: IpsetMode) => {
-    const root = await requireZapretPath();
-    if (mode === 'loaded' && isIpsetListMissing(path.join(root, 'lists'))) {
-      await updateIpsetList(root, (line) => sendToolOutput(line.text, line.level)).catch((error) => {
-        throw new Error(`Не удалось скачать список IPSet: ${error instanceof Error ? error.message : String(error)}`);
+    const { result: ipset, restarted } = await changeIpsetMode(mode);
+    return { ok: true, ipset, restarted };
+  });
+
+  ipcMain.handle('recover-bypass-now', async () => {
+    // Перебор конфигов может идти минуты: ошибки проверок отдаём сразу, а дальше
+    // ход восстановления виден по событиям сторожа — окно не висит в ожидании
+    const run = bypassWatchdog.recoverNow().finally(() => {
+      invalidateStatusCache();
+      mainWindow?.webContents.send('bypass-auto-started');
+      void refreshTrayMenu(true);
+    });
+    const finished = await Promise.race([run.then(() => true), delay(1500).then(() => false)]);
+    if (!finished) {
+      run.catch((error: unknown) => {
+        sendToolOutput(`Восстановление не удалось: ${error instanceof Error ? error.message : String(error)}`, 'warn');
       });
     }
-    const ipset = setIpsetModeForRoot(root, mode);
-    invalidateStatusCache();
-    return { ok: true, ipset };
+    return { ok: true, health: bypassWatchdog.currentHealth };
   });
 
   ipcMain.handle('update-ipset-list', async () => {

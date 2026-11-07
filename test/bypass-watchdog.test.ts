@@ -240,3 +240,157 @@ test('после сна проверка сайтов откладывается
   await tick();
   assert.equal(watchdog.currentHealth, 'degraded');
 });
+
+test('сдавшись, сторож сам пробует снова через паузу', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({
+    restartsBeforeSwitch: 1,
+    giveUpRetryMs: [5 * 60_000],
+    now: () => now,
+  });
+  state.working.clear();
+  await tick(2);
+  assert.equal(watchdog.currentHealth, 'down');
+  assert.equal(watchdog.nextRetryAt, now + 5 * 60_000);
+
+  const startedBefore = state.started.length;
+  now += 60_000;
+  await tick(3);
+  assert.equal(state.started.length, startedBefore, 'до срока не трогаем');
+
+  // провайдер починился: повторная попытка поднимает обход
+  state.working.add('a.bat');
+  now += 5 * 60_000;
+  await tick();
+  assert.equal(watchdog.currentHealth, 'ok');
+  assert.ok(state.events.includes('retry'));
+  assert.equal(watchdog.nextRetryAt, null);
+});
+
+test('если сайты открылись сами, повтор не перезапускает winws', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({ restartsBeforeSwitch: 1, giveUpRetryMs: [60_000], now: () => now });
+  state.working.clear();
+  await tick(2);
+  const startedBefore = state.started.length;
+  state.working.add('a.bat');
+  now += 61_000;
+  await tick();
+  assert.equal(watchdog.currentHealth, 'ok');
+  assert.equal(state.started.length, startedBefore);
+});
+
+test('пауза между повторами растёт', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({
+    restartsBeforeSwitch: 1,
+    giveUpRetryMs: [60_000, 600_000],
+    now: () => now,
+  });
+  state.working.clear();
+  await tick(2);
+  assert.equal(watchdog.nextRetryAt, now + 60_000);
+  now += 61_000;
+  await tick(); // повтор → снова перезапуск, сайты не открываются
+  await tick(2); // проверки и перебор → снова сдаётся
+  assert.equal(watchdog.currentHealth, 'down');
+  assert.equal(watchdog.nextRetryAt, now + 600_000);
+});
+
+test('смена сети приближает повтор после отказа', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({ restartsBeforeSwitch: 1, giveUpRetryMs: [30 * 60_000], now: () => now });
+  state.working.clear();
+  await tick(2);
+  watchdog.deferHealthCheck(20_000);
+  assert.equal(watchdog.nextRetryAt, now + 20_000);
+});
+
+test('пользователь выключил обход — повторов после отказа нет', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({ restartsBeforeSwitch: 1, giveUpRetryMs: [60_000], now: () => now });
+  state.working.clear();
+  await tick(2);
+  watchdog.setExpected(false);
+  const startedBefore = state.started.length;
+  now += 120_000;
+  await tick(3);
+  assert.equal(state.started.length, startedBefore);
+  assert.equal(watchdog.currentHealth, 'off');
+});
+
+test('«Починить сейчас» запускает восстановление сразу, не дожидаясь паузы', async () => {
+  let now = 1_000_000;
+  const { state, tick, watchdog } = createHarness({ restartsBeforeSwitch: 1, giveUpRetryMs: [30 * 60_000], now: () => now });
+  state.working.clear();
+  await tick(2);
+  assert.equal(watchdog.currentHealth, 'down');
+  state.working.add('b.bat');
+  await watchdog.recoverNow();
+  assert.equal(watchdog.currentHealth, 'ok');
+  assert.deepEqual(state.switched.at(-1), ['a.bat', 'b.bat']);
+});
+
+test('«Починить сейчас» не мешает выключенному обходу', async () => {
+  const { state, watchdog } = createHarness();
+  state.stoppedByUser = true;
+  await assert.rejects(() => watchdog.recoverNow(), /выключен/);
+  assert.deepEqual(state.started, []);
+});
+
+test('пропавшая сеть не съедает попытки восстановления', async () => {
+  const { state, tick } = createHarness({ maxAttempts: 2, restartsBeforeSwitch: 5 });
+  state.online = false;
+  // winws падает снова и снова, а проверка после перезапуска — «нет сети»
+  for (let i = 0; i < 6; i += 1) {
+    state.running = false;
+    await tick();
+  }
+  assert.equal(state.gaveUp, 0);
+  assert.equal(state.started.length, 6);
+});
+
+test('в игре сайты проверяются реже', async () => {
+  let now = 1_000_000;
+  let probes = 0;
+  const { tick } = createHarness({
+    healthCheckIntervalMs: 30_000,
+    gameHealthCheckIntervalMs: 300_000,
+    isGameMode: () => true,
+    now: () => now,
+    probe: async () => {
+      probes += 1;
+      return 'ok';
+    },
+  });
+  for (let i = 0; i < 20; i += 1) {
+    now += 30_000; // 10 минут
+    await tick();
+  }
+  assert.equal(probes, 2);
+});
+
+test('в игре конфиги не перебираются — только перезапуск текущего', async () => {
+  let inGame = true;
+  const { state, tick, watchdog } = createHarness({ restartsBeforeSwitch: 1, gameHealthCheckIntervalMs: 0, isGameMode: () => inGame });
+  state.working = new Set(['b.bat']);
+  await tick(6);
+  assert.ok(state.started.length > 0);
+  assert.ok(state.started.every((s) => s === 'a.bat'), 'запасные не пробовали');
+  assert.equal(state.quickPickCalls, 0);
+  assert.deepEqual(state.bad, []);
+  assert.equal(state.gaveUp, 0);
+
+  // игра закрылась — следующая неудача ведёт к переключению
+  inGame = false;
+  watchdog.gameEnded(0);
+  await tick(2);
+  assert.deepEqual(state.switched, [['a.bat', 'b.bat']]);
+});
+
+test('упавший winws в игре всё равно поднимается сразу', async () => {
+  const { state, tick } = createHarness({ isGameMode: () => true });
+  state.running = false;
+  await tick();
+  assert.deepEqual(state.started, ['a.bat']);
+});

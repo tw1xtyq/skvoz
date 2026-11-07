@@ -201,6 +201,7 @@
               <p class="bypass-activity-line">
                 <span class="health-dot" id="bypassHealthDot" aria-hidden="true"></span>
                 <span id="bypassActivityText">—</span>
+                <button class="btn btn-soft btn-xs hidden" id="btnRecoverNow" type="button">Починить</button>
               </p>
               <details class="bypass-history" id="bypassHistory">
                 <summary>История событий</summary>
@@ -606,6 +607,21 @@
           </label>
         </div>
         <div class="setting-block setting-block-compact">
+          <label class="switch">
+            <input type="checkbox" id="gameModeToggle">
+            <span class="switch-ui"></span>
+            <span class="switch-copy">
+              <span class="switch-title">Игровой режим</span>
+              <span class="switch-desc">Пока запущена игра — проверять сайты раз в 5 минут и не перебирать конфиги, чтобы не рвать соединение</span>
+            </span>
+          </label>
+        </div>
+        <div class="setting-block setting-block-compact setting-nested">
+          <label class="field-label" for="gameProcessesInput">Свои игры</label>
+          <input id="gameProcessesInput" class="tg-input" type="text" spellcheck="false" placeholder="mygame.exe, launcher.exe">
+          <p class="switch-desc probe-sites-hint">CS2, Dota 2, Valorant, Apex, Fortnite, Rust, Tarkov и другие игры на Unreal узнаются сами. Сюда — exe тех, что не узнались</p>
+        </div>
+        <div class="setting-block setting-block-compact">
           <label class="field-label" for="probeSitesInput">Сайты для проверки</label>
           <input id="probeSitesInput" class="tg-input" type="text" spellcheck="false" placeholder="youtube.com, discord.com">
           <p class="switch-desc probe-sites-hint">Через запятую, до 5. Пусто — YouTube и Discord из списка zapret</p>
@@ -618,7 +634,7 @@
             <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V18l-4 2v-7.5z"/></svg></span>
             <h3>Фильтры zapret</h3>
           </div>
-          <p class="card-hint">Что именно пропускает обход. Применяются при следующем запуске</p>
+          <p class="card-hint">Что именно пропускает обход. Если он работает — Skvoz перезапустит его сам</p>
         </header>
 
         <div class="runtime-lock-group" id="runtimeSettingsGroup">

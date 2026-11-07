@@ -22,6 +22,10 @@ export interface AppConfig {
   backgroundRerank: boolean;
   /** свои сайты для проверки обхода; пусто — YouTube и Discord из targets.txt */
   probeSites: string[];
+  /** пока запущена игра, сторож проверяет сайты реже и не перебирает конфиги */
+  gameMode: boolean;
+  /** свои exe игр в дополнение к встроенному списку */
+  gameProcesses: string[];
   dismissedAppVersion: string | null;
   skipAutoBootstrap: boolean;
   autoUpdateZapret: boolean;
@@ -47,6 +51,8 @@ export function loadConfig(): AppConfig {
     bypassAutoSwitch: true,
     backgroundRerank: true,
     probeSites: [],
+    gameMode: true,
+    gameProcesses: [],
     dismissedAppVersion: null,
     skipAutoBootstrap: false,
     settingsRevision: SETTINGS_REVISION,
@@ -57,6 +63,7 @@ export function loadConfig(): AppConfig {
     const raw = fs.readFileSync(configPath(), 'utf8');
     const merged: AppConfig = { ...defaults, ...JSON.parse(raw) };
     if (!Array.isArray(merged.probeSites)) merged.probeSites = [];
+    if (!Array.isArray(merged.gameProcesses)) merged.gameProcesses = [];
     // Следующие загрузки zapret — вне папки установки; уже скачанный найдётся сканером,
     // а при обновлении zapret переедет в новую папку вместе со списками
     if (isInsideAppInstall(merged.installBase)) merged.installBase = getDefaultInstallBase();

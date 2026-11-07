@@ -3,9 +3,17 @@
 interface TrayApi {
   getDashboardState(options?: { light?: boolean }): Promise<{
     config: { selectedStrategy: string | null };
-    status: { pathsValid: boolean; bypass: { running: boolean }; selectedStrategy: string | null };
+    status: {
+      pathsValid: boolean;
+      bypass: { running: boolean };
+      selectedStrategy: string | null;
+      settings: { gameFilter: GameFilter; ipset: IpsetMode };
+    };
   }>;
   startBypass(): Promise<unknown>;
+  setIpsetMode(mode: IpsetMode): Promise<{ restarted?: boolean }>;
+  setGameFilter(mode: GameFilter): Promise<{ restarted?: boolean }>;
+  recoverBypassNow(): Promise<{ health: Health }>;
   stopBypass(): Promise<unknown>;
   tgwsStatus(): Promise<{
     running: boolean;
@@ -18,13 +26,23 @@ interface TrayApi {
   vpnConnect(): Promise<unknown>;
   vpnDisconnect(): Promise<unknown>;
   checkAccess(): Promise<Array<{ id: string; status: 'ok' | 'partial' | 'fail'; detail: string }>>;
-  getBypassActivity(): Promise<{ health: Health; healthLabel: string; network: string; since: { at: number } | null }>;
+  getBypassActivity(): Promise<{
+    health: Health;
+    healthLabel: string;
+    network: string;
+    since: { at: number } | null;
+    retryAt: number | null;
+    canRecover: boolean;
+    game: string | null;
+  }>;
   onBypassActivityChanged(callback: () => void): () => void;
   showMainWindow(view?: string): Promise<unknown>;
   onTrayReveal(callback: () => void): () => void;
 }
 
 type Health = 'off' | 'checking' | 'ok' | 'degraded' | 'recovering' | 'down';
+type IpsetMode = 'loaded' | 'any' | 'none';
+type GameFilter = 'disabled' | 'all' | 'tcp' | 'udp';
 
 const trayApi = (window as unknown as { zapretApi: TrayApi }).zapretApi;
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -42,6 +60,12 @@ const summary = $('tpSummary');
 const meta = $('tpMeta');
 const errorEl = $('tpError');
 const checkBtn = $<HTMLButtonElement>('tpCheck');
+const repairRow = $('tpRepair');
+const repairText = $('tpRepairText');
+const repairBtn = $<HTMLButtonElement>('tpRepairBtn');
+const tune = $('tpTune');
+const ipsetSeg = $('tpIpset');
+const gameSeg = $('tpGame');
 
 let busy = false;
 let pollTimer: number | null = null;
@@ -77,10 +101,19 @@ async function refresh(): Promise<void> {
         : `Выключен${strategy ? ` · ${strategy}` : ''}`;
     bypassText.title = bypassText.textContent;
 
-    const metaParts = [activity.network === 'Неизвестная сеть' ? '' : activity.network];
+    const metaParts = [
+      activity.game ? `игровой режим · ${activity.game}` : '',
+      activity.network === 'Неизвестная сеть' ? '' : activity.network,
+    ];
     if (running && activity.since) metaParts.push(`обход работает с ${formatClock(activity.since.at)}`);
     meta.textContent = metaParts.filter(Boolean).join(' · ');
     meta.classList.toggle('hidden', !meta.textContent);
+
+    renderRepair(running, activity);
+    renderSeg(ipsetSeg, status.pathsValid ? status.settings.ipset : null);
+    renderSeg(gameSeg, status.pathsValid ? status.settings.gameFilter : null);
+    tune.classList.toggle('is-disabled', !status.pathsValid);
+    tune.title = !status.pathsValid ? 'zapret не найден' : running ? 'Смена перезапустит обход' : '';
 
     tgRow.classList.toggle('is-live', tg.running);
     tgToggle.checked = tg.running;
@@ -108,13 +141,19 @@ async function refresh(): Promise<void> {
   }
 }
 
+function setControlsDisabled(disabled: boolean): void {
+  bypassToggle.disabled = disabled;
+  tgToggle.disabled = disabled;
+  vpnToggle.disabled = disabled;
+  repairBtn.disabled = disabled;
+  document.querySelectorAll<HTMLButtonElement>('.tp-seg button').forEach((b) => (b.disabled = disabled));
+}
+
 async function act(fn: () => Promise<unknown>): Promise<void> {
   if (busy) return;
   busy = true;
   errorEl.classList.add('hidden');
-  bypassToggle.disabled = true;
-  tgToggle.disabled = true;
-  vpnToggle.disabled = true;
+  setControlsDisabled(true);
   try {
     await fn();
   } catch (err) {
@@ -122,11 +161,49 @@ async function act(fn: () => Promise<unknown>): Promise<void> {
   } finally {
     busy = false;
     // refresh снова заблокирует недоступное; если он упадёт — переключатели не залипнут
-    bypassToggle.disabled = false;
-    tgToggle.disabled = false;
-    vpnToggle.disabled = false;
+    setControlsDisabled(false);
     await refresh();
   }
+}
+
+function renderSeg(seg: HTMLElement, value: string | null): void {
+  seg.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+    button.setAttribute('aria-checked', String(button.dataset.value === value));
+    button.classList.remove('is-pending');
+    if (!busy) button.disabled = value === null;
+  });
+}
+
+/** Сторож видит сбой или сдался — даём починить в один клик, а не искать кнопку в окне */
+function renderRepair(running: boolean, activity: Awaited<ReturnType<TrayApi['getBypassActivity']>>): void {
+  const show = activity.canRecover && (activity.health === 'down' || (running && activity.health === 'degraded'));
+  repairRow.classList.toggle('hidden', !show && activity.health !== 'recovering');
+  repairRow.classList.toggle('is-bad', activity.health === 'down');
+  if (activity.health === 'recovering') {
+    repairText.textContent = 'Восстанавливаю обход…';
+    repairBtn.classList.add('hidden');
+    return;
+  }
+  repairBtn.classList.remove('hidden');
+  repairText.textContent =
+    activity.health === 'down'
+      ? activity.retryAt
+        ? `Сам попробую в ${formatClock(activity.retryAt)}`
+        : 'Рабочий конфиг не найден'
+      : 'Не все сайты открываются';
+  repairText.title = repairText.textContent;
+}
+
+function bindSeg(seg: HTMLElement, apply: (value: string) => Promise<unknown>): void {
+  seg.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-value]');
+    if (!button || button.disabled || button.getAttribute('aria-checked') === 'true') return;
+    // сразу показываем выбор: перезапуск обхода занимает пару секунд
+    seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', 'false'));
+    button.setAttribute('aria-checked', 'true');
+    button.classList.add('is-pending');
+    void act(() => apply(button.dataset.value!));
+  });
 }
 
 function formatClock(timestamp: number): string {
@@ -143,6 +220,13 @@ tgToggle.addEventListener('change', () => void act(() => (tgToggle.checked ? tra
 vpnToggle.addEventListener('change', () =>
   void act(() => (vpnToggle.checked ? trayApi.vpnConnect() : trayApi.vpnDisconnect()))
 );
+bindSeg(ipsetSeg, (value) => trayApi.setIpsetMode(value as IpsetMode));
+bindSeg(gameSeg, (value) => trayApi.setGameFilter(value as GameFilter));
+repairBtn.addEventListener('click', () => {
+  repairText.textContent = 'Восстанавливаю обход…';
+  repairBtn.classList.add('hidden');
+  void act(() => trayApi.recoverBypassNow());
+});
 $('tpOpen').addEventListener('click', () => void trayApi.showMainWindow());
 $('tpSettings').addEventListener('click', () => void trayApi.showMainWindow('settings'));
 // сторож сменил состояние или конфиг — не ждём следующего опроса
