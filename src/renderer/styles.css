@@ -4842,3 +4842,8 @@ body.tray-popup { gap: 8px; padding: 12px; background: var(--bg); }
 .bypass-history-list .is-info { color: var(--accent); }
 .bypass-activity-line #bypassActivityText { flex: 1; min-width: 0; }
 .bypass-activity-line #btnRecoverNow { flex: 0 0 auto; margin-left: auto; }
+
+/* Мини-окно трея по высоте содержимого: main подгоняет окно под body */
+html:has(body.tray-popup) { background: var(--bg); }
+body.tray-popup { height: auto; min-height: 0; }
+body.tray-popup .tp-actions { margin-top: 2px; }

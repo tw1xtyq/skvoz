@@ -437,7 +437,7 @@ const bypassWatchdog = new BypassWatchdog({
     notify(
       'Обход не работает',
       retryAt
-        ? `Рабочий конфиг не найден. Попробую снова в ${formatClock(retryAt)} — или нажмите «Починить» в трее.`
+        ? `Рабочий конфиг не найден. Попробую снова в ${formatTimeOnly(retryAt)} — или нажмите «Починить» в трее.`
         : 'Рабочий конфиг не найден. Откройте приложение, чтобы проверить настройки.'
     );
     void refreshTrayMenu(true);
@@ -1071,7 +1071,10 @@ function scheduleTraySync(): void {
 
 // ── Мини-окно у трея ──────────────────────────────────────────────────
 
-const TRAY_WINDOW_SIZE = { width: 330, height: 516 };
+const TRAY_WINDOW_SIZE = { width: 330, height: 470 };
+/** Высоту задаёт само окно по содержимому: полоска «Починить» появляется только при сбое */
+const TRAY_HEIGHT_LIMITS = { min: 320, max: 680 };
+let trayWindowHeight = TRAY_WINDOW_SIZE.height;
 let trayWindow: BrowserWindow | null = null;
 let trayWindowHiddenAt = 0;
 
@@ -1115,7 +1118,8 @@ function positionTrayWindow(win: BrowserWindow): void {
   const icon = tray.getBounds();
   const display = screen.getDisplayNearestPoint({ x: icon.x, y: icon.y });
   const area = display.workArea;
-  const { width, height } = TRAY_WINDOW_SIZE;
+  const { width } = TRAY_WINDOW_SIZE;
+  const height = Math.min(trayWindowHeight, display.workArea.height - 16);
   const gap = 8;
 
   let x = Math.round(icon.x + icon.width / 2 - width / 2);
@@ -1126,7 +1130,16 @@ function positionTrayWindow(win: BrowserWindow): void {
   }
   x = Math.min(Math.max(x, area.x + gap), area.x + area.width - width - gap);
   y = Math.min(Math.max(y, area.y + gap), area.y + area.height - height - gap);
-  win.setPosition(x, y, false);
+  // нижний край остаётся у значка: окно растёт вверх
+  win.setBounds({ x, y, width, height }, false);
+}
+
+function resizeTrayWindow(height: number): void {
+  if (!Number.isFinite(height)) return;
+  const next = Math.round(Math.min(Math.max(height, TRAY_HEIGHT_LIMITS.min), TRAY_HEIGHT_LIMITS.max));
+  if (next === trayWindowHeight) return;
+  trayWindowHeight = next;
+  if (trayWindow && !trayWindow.isDestroyed()) positionTrayWindow(trayWindow);
 }
 
 function toggleTrayWindow(): void {
@@ -1237,7 +1250,7 @@ function buildTrayMenu(): Menu {
   const retryAt = bypassWatchdog.nextRetryAt;
   const bypassState =
     health === 'down'
-      ? `не работает${retryAt ? ` · повтор в ${formatClock(retryAt)}` : ''}`
+      ? `не работает${retryAt ? ` · повтор в ${formatTimeOnly(retryAt)}` : ''}`
       : running ? HEALTH_LABEL[health] : 'выключен';
   const canRepair =
     !automationBusy && (health === 'down' || health === 'degraded') && config.bypassAutoRecover !== false;
@@ -1326,6 +1339,11 @@ function buildTrayMenu(): Menu {
       click: () => quitApp(),
     },
   ]);
+}
+
+/** Время ближайшего события (повтор не дальше часа) — без даты, даже если оно уже завтра */
+function formatTimeOnly(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatClock(timestamp: number): string {
@@ -2024,6 +2042,10 @@ function registerIpc(): void {
     saveConfig(config);
     if (config.autoUpdateZapret) void autoUpdateZapret();
     return { autoUpdateZapret: config.autoUpdateZapret };
+  });
+
+  ipcMain.on('tray-content-height', (event, height: unknown) => {
+    if (trayWindow && event.sender === trayWindow.webContents && typeof height === 'number') resizeTrayWindow(height);
   });
 
   ipcMain.handle('show-main-window', (_e, view?: string) => {

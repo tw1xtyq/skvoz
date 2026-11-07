@@ -1727,6 +1727,11 @@ const EVENT_TONE: Record<string, string> = {
 
 let lastBypassRunning = false;
 
+/** Время ближайшего события (повтор не дальше часа) — без даты, даже если оно уже завтра */
+function formatTimeOnly(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
 function formatEventTime(at: number): string {
   const date = new Date(at);
   const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -1752,7 +1757,7 @@ async function refreshBypassActivity(running = lastBypassRunning): Promise<void>
   } else if (activity.health === 'down') {
     parts.push(
       activity.retryAt
-        ? `Рабочий конфиг не найден — попробую снова в ${formatEventTime(activity.retryAt)}`
+        ? `Рабочий конфиг не найден — попробую снова в ${formatTimeOnly(activity.retryAt)}`
         : 'Обход остановился: рабочий конфиг не найден'
     );
   }

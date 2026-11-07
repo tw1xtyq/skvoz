@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('zapretApi', {
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   isAdmin: () => ipcRenderer.invoke('is-admin'),
   restartAsAdmin: () => ipcRenderer.invoke('restart-as-admin'),
+  reportTrayHeight: (height: number) => ipcRenderer.send('tray-content-height', height),
   onTrayReveal: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on('tray-reveal', listener);

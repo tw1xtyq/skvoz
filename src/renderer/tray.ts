@@ -38,6 +38,7 @@ interface TrayApi {
   onBypassActivityChanged(callback: () => void): () => void;
   showMainWindow(view?: string): Promise<unknown>;
   onTrayReveal(callback: () => void): () => void;
+  reportTrayHeight(height: number): void;
 }
 
 type Health = 'off' | 'checking' | 'ok' | 'degraded' | 'recovering' | 'down';
@@ -188,7 +189,7 @@ function renderRepair(running: boolean, activity: Awaited<ReturnType<TrayApi['ge
   repairText.textContent =
     activity.health === 'down'
       ? activity.retryAt
-        ? `Сам попробую в ${formatClock(activity.retryAt)}`
+        ? `Сам попробую в ${formatTimeOnly(activity.retryAt)}`
         : 'Рабочий конфиг не найден'
       : 'Не все сайты открываются';
   repairText.title = repairText.textContent;
@@ -204,6 +205,11 @@ function bindSeg(seg: HTMLElement, apply: (value: string) => Promise<unknown>): 
     button.classList.add('is-pending');
     void act(() => apply(button.dataset.value!));
   });
+}
+
+/** Время ближайшего события (повтор не дальше часа) — без даты, даже если оно уже завтра */
+function formatTimeOnly(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatClock(timestamp: number): string {
@@ -277,5 +283,14 @@ trayApi.onTrayReveal(() => {
   startPolling();
 });
 startPolling();
+
+// Окно подстраивается под содержимое — без пустоты внизу, когда чинить нечего
+let reportedHeight = 0;
+new ResizeObserver(() => {
+  const height = Math.ceil(document.body.getBoundingClientRect().height);
+  if (height === reportedHeight) return;
+  reportedHeight = height;
+  trayApi.reportTrayHeight(height);
+}).observe(document.body);
 
 export {};
