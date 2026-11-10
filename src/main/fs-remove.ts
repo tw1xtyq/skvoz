@@ -44,10 +44,35 @@ export async function killWinwsProcesses(): Promise<void> {
   }
 }
 
+async function serviceRunning(name: string): Promise<boolean> {
+  let output = '';
+  await runHidden('sc', ['query', name], {
+    timeoutMs: 10_000,
+    onLine: (line) => {
+      output += `${line.text}\n`;
+    },
+  }).catch(() => undefined);
+  return /STATE\s*:\s*\d+\s+(RUNNING|STOP_PENDING|START_PENDING)/i.test(output);
+}
+
+/**
+ * Драйвер WinDivert остаётся загруженным и после выхода winws (особенно после аварийного)
+ * и держит открытым свой .sys в папке zapret: такую папку Windows не даёт ни переименовать,
+ * ни удалить. Перед заменой установки выгружаем драйвер — обход в этот момент и так остановлен.
+ */
+export async function releaseWinDivert(): Promise<void> {
+  await killWinwsProcesses();
+  for (const name of ['WinDivert', 'WinDivert14']) {
+    if (!(await serviceRunning(name))) continue;
+    await runHidden('sc', ['stop', name], { timeoutMs: 10_000, onLine: () => {} }).catch(() => undefined);
+    for (let i = 0; i < 12 && (await serviceRunning(name)); i += 1) await delay(500);
+  }
+}
+
 export async function removeDirectoryRobust(dir: string): Promise<void> {
   if (!fs.existsSync(dir)) return;
 
-  await killWinwsProcesses();
+  await releaseWinDivert();
   await delay(500);
 
   let lastError: Error | null = null;

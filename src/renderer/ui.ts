@@ -18,8 +18,7 @@ export function humanizeError(err: unknown, fallbackTitle = 'Что-то пош�
   const lower = raw.toLowerCase();
 
   if (/eperm|eacces|operation not permitted|отказано в доступе|занят другим процессом/i.test(raw)) {
-    const fileMatch = raw.match(/unlink\s+'([^']+)'|remove\s+'([^']+)'|:\s*(.+\\[^\\]+)$/i);
-    const fileName = fileMatch ? pathBasename(fileMatch[1] ?? fileMatch[2] ?? fileMatch[3] ?? '') : '';
+    const fileName = lockedFileName(raw);
     return {
       title: 'Файл занят',
       message: fileName
@@ -76,9 +75,22 @@ export function humanizeError(err: unknown, fallbackTitle = 'Что-то пош�
   };
 }
 
+/**
+ * Имя занятого файла из ошибки Node/PowerShell: «EPERM: ..., rename 'C:\a\b' -> 'C:\a\c'».
+ * Берём путь в кавычках (у rename — исходный), а не «всё после двоеточия»: из пути
+ * с хвостовым «\» раньше получалась одна кавычка.
+ */
+export function lockedFileName(raw: string): string {
+  const quoted = [...raw.matchAll(/'([A-Za-z]:\\[^']*|\\\\[^']+|\/[^']+)'/g)].map((m) => m[1]);
+  const bare = raw.match(/([A-Za-z]:\\[^\s'"<>|]*[^\s'"<>|\\.,;:)])/);
+  const candidate = quoted[0] ?? bare?.[1] ?? '';
+  const name = pathBasename(candidate);
+  return /[\p{L}\p{N}]/u.test(name) ? name : '';
+}
+
 function pathBasename(value: string): string {
-  const parts = value.replace(/\\/g, '/').split('/');
-  return parts[parts.length - 1] || value;
+  const parts = value.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
 }
 
 const OVERLAY_CLOSE_MS = 320;

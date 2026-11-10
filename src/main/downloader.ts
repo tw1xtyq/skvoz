@@ -5,7 +5,7 @@ import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { decodeProcessOutput, runHidden } from './exec';
-import { removeDirectoryRobust } from './fs-remove';
+import { releaseWinDivert, removeDirectoryRobust } from './fs-remove';
 import { describeNetworkError, downloadWithRetry, httpFetch } from './http';
 import { readIpsetMode, switchIpsetFiles, type IpsetMode } from './ipset-files';
 import { ensureUserListFiles } from './user-lists';
@@ -423,6 +423,15 @@ function isRenameBlocked(err: unknown): boolean {
   return code === 'EXDEV' || code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
 }
 
+/** Файл или папку держит другой процесс — по коду или, если код потерялся по дороге, по тексту */
+export function isFileLockError(err: unknown): boolean {
+  if (isRenameBlocked(err)) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(EPERM|EACCES|EBUSY|ENOTEMPTY)\b|operation not permitted|resource busy|being used by another process|отказано в доступе|используется другим процессом|занят другим процессом/i.test(
+    message
+  );
+}
+
 async function moveDirectory(source: string, target: string): Promise<void> {
   await fsp.mkdir(path.dirname(target), { recursive: true });
   try {
@@ -430,7 +439,8 @@ async function moveDirectory(source: string, target: string): Promise<void> {
   } catch (err) {
     if (!isRenameBlocked(err)) throw err;
     await copyDirectory(source, target);
-    await removeDirectory(source, false);
+    // исходник во временной папке: если его ещё держит антивирус, уберём позже, а установку не срываем
+    await removeDirectory(source, false).catch(() => undefined);
   }
 }
 
@@ -444,6 +454,8 @@ async function promoteStagingToInstall(
   if (fs.existsSync(installPath)) {
     report({ stage: 'install', percent: 52, message: 'Освобождение папки установки...' });
     await yieldToEventLoop();
+    // драйвер держит WinDivert64.sys из этой папки, пока загружен
+    await releaseWinDivert();
 
     const retiredPath = `${installPath}.retired-${Date.now()}`;
     try {
@@ -470,7 +482,56 @@ async function promoteStagingToInstall(
   await copyDirectory(stagingPath, installPath, () => {
     report({ stage: 'install', percent: 68, message: 'Копирование файлов установки...' });
   });
-  await removeDirectory(stagingPath, false);
+  // файлы уже на месте; временную копию уберёт finally в downloadOfficialZapret или следующая установка
+  await removeDirectory(stagingPath, false).catch(() => undefined);
+}
+
+/**
+ * Старую папку той же версии бывает не освободить ничем, кроме перезагрузки (её держит
+ * антивирус, проводник или другой zapret). Тогда ставим рядом — «...-1.10.4-2» —
+ * и переключаемся на неё: установка не должна срываться из-за занятой старой папки.
+ */
+export async function promoteWithFallback(
+  stagingPath: string,
+  installPath: string,
+  report: ProgressCallback,
+  promote: (staging: string, target: string, report: ProgressCallback) => Promise<void> = promoteStagingToInstall
+): Promise<string> {
+  try {
+    await promote(stagingPath, installPath, report);
+    return installPath;
+  } catch (error) {
+    if (!isFileLockError(error) || !fs.existsSync(stagingPath)) throw error;
+    for (let n = 2; n < 10; n += 1) {
+      const alternative = `${installPath}-${n}`;
+      if (fs.existsSync(alternative)) continue;
+      report({ stage: 'install', percent: 60, message: 'Старая папка занята — ставлю рядом...' });
+      await promote(stagingPath, alternative, report);
+      return alternative;
+    }
+    throw error;
+  }
+}
+
+/** Недоудалённые прошлые установки и загрузки: их держали файлы, теперь обычно уже отпустили */
+export function removeInstallLeftovers(installBase: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(installBase);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!/^zapret-discord-youtube-.+\.retired-\d+$|^zapret-download-/.test(name)) continue;
+    const full = path.join(installBase, name);
+    // текущую загрузку не трогаем: она моложе часа
+    try {
+      if (/^zapret-download-/.test(name) && Date.now() - fs.statSync(full).mtimeMs < 60 * 60_000) continue;
+    } catch {
+      continue;
+    }
+    void fsp.rm(full, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 }).catch(() => undefined);
+  }
 }
 
 function createDownloadTempDir(installBase: string): string {
@@ -550,7 +611,7 @@ async function installFromZip(
   existingRoot: string | null,
   report: ProgressCallback
 ): Promise<{ installPath: string; version: string }> {
-  const installPath = getInstallPath(installBase, version);
+  let installPath = getInstallPath(installBase, version);
   const extractDir = path.join(tempDir, 'extract');
 
   await yieldToEventLoop();
@@ -573,7 +634,8 @@ async function installFromZip(
   report({ stage: 'install', percent: 25, message: 'Подготовка файлов...' });
   await yieldToEventLoop();
   await moveDirectory(extractedRoot, stagingPath);
-  await promoteStagingToInstall(stagingPath, installPath, report);
+  removeInstallLeftovers(installBase);
+  installPath = await promoteWithFallback(stagingPath, installPath, report);
 
   report({ stage: 'install', percent: 75, message: 'Восстановление списков...' });
   restoreUserFiles(installPath, backup);

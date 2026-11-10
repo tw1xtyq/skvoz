@@ -482,7 +482,11 @@ async function runBackgroundRerank(shouldCancel: () => boolean): Promise<'done' 
   const root = await tryResolveZapretPath({ allowScan: false });
   if (!root) return 'failed';
   const previous = config.selectedStrategy;
-  const log = (line: { text: string; level: string }): void => sendToolOutput(`[Фон] ${line.text}`, line.level);
+  const log = (line: { text: string; level: string }): void => {
+    // служебные строки подбора — для окна, не для журнала
+    if (line.text.startsWith('__')) return;
+    sendToolOutput(`[Фон] ${line.text}`, line.level);
+  };
 
   logBypassEvent('rerank', 'Перепроверка конфигов в простое');
   let outcome: PickBestStrategyOutcome | null = null;
