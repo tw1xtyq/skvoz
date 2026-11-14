@@ -1706,6 +1706,7 @@ interface BypassActivity {
   retryAt?: number | null;
   canRecover?: boolean;
   game?: string | null;
+  foreignVpn?: string | null;
 }
 
 const HEALTH_DOT_CLASS: Partial<Record<BypassHealth, string>> = {
@@ -1760,6 +1761,9 @@ async function refreshBypassActivity(running = lastBypassRunning): Promise<void>
         ? `Рабочий конфиг не найден — попробую снова в ${formatTimeOnly(activity.retryAt)}`
         : 'Обход остановился: рабочий конфиг не найден'
     );
+  }
+  if (running && activity.foreignVpn) {
+    parts.push(`весь трафик идёт через VPN «${activity.foreignVpn}» — отключите его, иначе YouTube будет отваливаться`);
   }
   if (activity.game) parts.push(`игровой режим: ${activity.game}`);
   parts.push(`сеть: ${activity.network}`);

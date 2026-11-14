@@ -41,7 +41,7 @@ import { GameDetector, gameLabel, normalizeGameProcess, parseTasklistNames } fro
 import { BackgroundRerank, hasDisplayRequests } from './background-rerank';
 import { buildDiagnosticReport, type LogLine } from './diagnostic-report';
 import { loadLogProblems, saveLogProblems } from './tool-log';
-import { capture, detectNetwork, interfacesFingerprint, UNKNOWN_NETWORK, type NetworkIdentity } from './network-id';
+import { capture, detectForeignTunnel, detectNetwork, interfacesFingerprint, UNKNOWN_NETWORK, type NetworkIdentity } from './network-id';
 import { StrategyMemory } from './strategy-memory';
 import { withStatusDot, type Rgb } from './tray-badge';
 import { APP_WINDOW } from './window-size';
@@ -271,6 +271,9 @@ const toolLog: LogLine[] = loadLogProblems(toolErrorsFile);
 const tgLogRepeats = new RepeatFilter(60_000);
 let currentNetwork: NetworkIdentity = UNKNOWN_NETWORK;
 let networkFingerprint = '';
+/** Сторонний VPN (AmneziaVPN, Hiddify, v2rayN…), через который идёт весь интернет */
+let foreignVpn: string | null = null;
+const OWN_TUNNELS = ['SkvozVPN'];
 let networkTimer: ReturnType<typeof setInterval> | null = null;
 
 const HEALTH_LABEL: Record<WatchdogHealth, string> = {
@@ -360,6 +363,8 @@ const bypassWatchdog = new BypassWatchdog({
   healthCheckIntervalMs: 30_000,
   gameHealthCheckIntervalMs: 5 * 60_000,
   isGameMode: (): boolean => gameDetector.current !== null,
+  // проверки сайтов идут через чужой VPN и ничего не говорят о zapret
+  isProbeUnreliable: () => foreignVpn !== null,
   maxAttempts: 8,
   restartsBeforeSwitch: 2,
   maxFallbacks: 4,
@@ -547,8 +552,30 @@ async function waitForBackgroundRerank(timeoutMs = 20_000): Promise<void> {
   if (backgroundRerank.isRunning) throw new Error('Идёт фоновая перепроверка конфигов — попробуйте через минуту');
 }
 
+/**
+ * Чужой VPN забрал весь трафик: сайты открываются через него, а не через zapret,
+ * и проверки обхода врут в обе стороны. Сторож в это время не трогает winws.
+ */
+async function refreshForeignVpn(initial = false): Promise<void> {
+  const tunnels = interfacesFingerprint(undefined, { tunnels: 'only' });
+  const next = tunnels ? await detectForeignTunnel(OWN_TUNNELS).catch(() => foreignVpn) : null;
+  if (next === foreignVpn) return;
+  const previous = foreignVpn;
+  foreignVpn = next;
+  if (next) {
+    logBypassEvent('network', `Включён сторонний VPN (${next}) — проверки обхода на паузе`);
+    if (!initial) sendToolOutput(`Весь трафик идёт через сторонний VPN «${next}». Он мешает zapret: YouTube может отваливаться. Отключите VPN или включите в нём раздельное туннелирование.`, 'warn');
+  } else {
+    logBypassEvent('network', `Сторонний VPN (${previous}) отключён`);
+    bypassWatchdog.deferHealthCheck(10_000);
+  }
+  emitBypassActivity();
+  void refreshTrayMenu();
+}
+
 /** Сеть сменилась — включаем конфиг, который в ней работал в прошлый раз */
 async function refreshNetwork(initial = false): Promise<void> {
+  await refreshForeignVpn(initial);
   // туннель VPN подменяет маршрут по умолчанию — это не новая сеть; посмотрим, когда отключится
   if (!initial && amneziaVpn.isRunning()) return;
   const fingerprint = interfacesFingerprint();
@@ -658,6 +685,7 @@ async function saveDiagnosticReport(): Promise<{ saved: boolean; path?: string }
     zapret: { path: root, running, strategy: config.selectedStrategy, strategies },
     watchdogHealth: bypassWatchdog.currentHealth,
     network: currentNetwork.label,
+    foreignVpn,
     rankings: root ? currentRankings(root) : [],
     rankedAt: root ? strategyMemory.rankedAt(currentNetwork.id, root) : null,
     events: bypassEvents.list(50),
@@ -2110,6 +2138,7 @@ function registerIpc(): void {
     healthLabel: HEALTH_LABEL[bypassWatchdog.currentHealth],
     retryAt: bypassWatchdog.nextRetryAt,
     game: gameDetector.current ? gameLabel(gameDetector.current) : null,
+    foreignVpn,
     canRecover: config.bypassAutoRecover !== false && !isBypassAutomationBusy() && !bypassWatchdog.isRecovering,
     network: currentNetwork.label,
     since: bypassEvents.runningSince(),

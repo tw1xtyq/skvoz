@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { interfacesFingerprint, parseArpMac, parseDefaultGateway, parseWlanSsid } from '../src/main/network-id';
+import {
+  findForeignTunnel,
+  interfacesFingerprint,
+  isTunnelAdapter,
+  parseArpMac,
+  parseDefaultGateway,
+  parseWlanSsid,
+  tunnelAddresses,
+} from '../src/main/network-id';
 
 const ROUTE_PRINT = `
 ===========================================================================
@@ -77,4 +85,52 @@ test('отпечаток адресов не зависит от порядка 
   });
   assert.equal(a, b);
   assert.ok(!a.includes('127.0.0.1'));
+});
+
+// AmneziaVPN (sing-tun): весь интернет через tun0 парой маршрутов /1
+const AMNEZIA_ROUTES = `
+Активные маршруты:
+Сетевой адрес           Маска сети      Адрес шлюза       Интерфейс  Метрика
+          0.0.0.0          0.0.0.0      192.168.0.1     192.168.0.12     25
+          0.0.0.0        128.0.0.0       172.19.0.2       172.19.0.1      0
+        128.0.0.0        128.0.0.0       172.19.0.2       172.19.0.1      0
+          0.0.0.0          0.0.0.0       172.19.0.2       172.19.0.1      5
+Постоянные маршруты:
+  Сетевой адрес            Маска    Адрес шлюза      Метрика
+          0.0.0.0          0.0.0.0      192.168.0.1  По умолчанию
+`;
+
+const IFACES = {
+  'Беспроводная сеть': [{ address: '192.168.0.12', netmask: '255.255.255.0', family: 'IPv4', internal: false }],
+  tun0: [{ address: '172.19.0.1', netmask: '255.255.255.252', family: 'IPv4', internal: false }],
+  SkvozVPN: [{ address: '10.8.1.2', netmask: '255.255.255.255', family: 'IPv4', internal: false }],
+} as unknown as NodeJS.Dict<import('os').NetworkInterfaceInfo[]>;
+
+test('туннели VPN узнаются по имени адаптера', () => {
+  for (const name of ['tun0', 'wg0', 'AmneziaVPN', 'sing-tun Tunnel', 'WireGuard Tunnel', 'Outline-Tap', 'CloudflareWARP', 'SkvozVPN']) {
+    assert.ok(isTunnelAdapter(name), name);
+  }
+  for (const name of ['Ethernet', 'Беспроводная сеть', 'Wi-Fi', 'Ethernet 2']) assert.ok(!isTunnelAdapter(name), name);
+});
+
+test('шлюз чужого VPN — не новая сеть', () => {
+  const tunnels = new Set(tunnelAddresses(IFACES).keys());
+  assert.equal(parseDefaultGateway(AMNEZIA_ROUTES, tunnels), '192.168.0.1');
+});
+
+test('чужой VPN на весь трафик находится, свой — нет', () => {
+  const tunnels = tunnelAddresses(IFACES);
+  assert.equal(findForeignTunnel(AMNEZIA_ROUTES, tunnels, ['SkvozVPN']), 'tun0');
+  const own = '          0.0.0.0          0.0.0.0         10.8.1.1         10.8.1.2      5';
+  assert.equal(findForeignTunnel(own, tunnels, ['SkvozVPN']), null);
+  // туннель есть, но интернет идёт мимо него (раздельное туннелирование)
+  const split = '         10.0.0.0      255.0.0.0       172.19.0.2       172.19.0.1      5';
+  assert.equal(findForeignTunnel(split, tunnels, ['SkvozVPN']), null);
+});
+
+test('включение VPN не меняет отпечаток сети', () => {
+  const { tun0: _tun, SkvozVPN: _own, ...plain } = IFACES;
+  assert.equal(interfacesFingerprint(IFACES), interfacesFingerprint(plain));
+  assert.notEqual(interfacesFingerprint(IFACES, { tunnels: 'only' }), '');
+  assert.equal(interfacesFingerprint(plain, { tunnels: 'only' }), '');
 });

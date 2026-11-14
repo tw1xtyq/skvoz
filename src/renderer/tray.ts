@@ -34,6 +34,7 @@ interface TrayApi {
     retryAt: number | null;
     canRecover: boolean;
     game: string | null;
+    foreignVpn: string | null;
   }>;
   onBypassActivityChanged(callback: () => void): () => void;
   showMainWindow(view?: string): Promise<unknown>;
@@ -177,6 +178,14 @@ function renderSeg(seg: HTMLElement, value: string | null): void {
 
 /** Сторож видит сбой или сдался — даём починить в один клик, а не искать кнопку в окне */
 function renderRepair(running: boolean, activity: Awaited<ReturnType<TrayApi['getBypassActivity']>>): void {
+  if (running && activity.foreignVpn) {
+    // чинить zapret бесполезно: трафик забирает чужой VPN
+    repairRow.classList.remove('hidden', 'is-bad');
+    repairBtn.classList.add('hidden');
+    repairText.textContent = `Мешает VPN «${activity.foreignVpn}» — отключите его`;
+    repairText.title = 'Весь трафик идёт через сторонний VPN, мимо zapret. Пока он включён, проверки обхода на паузе.';
+    return;
+  }
   const show = activity.canRecover && (activity.health === 'down' || (running && activity.health === 'degraded'));
   repairRow.classList.toggle('hidden', !show && activity.health !== 'recovering');
   repairRow.classList.toggle('is-bad', activity.health === 'down');

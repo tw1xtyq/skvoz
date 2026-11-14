@@ -38,6 +38,11 @@ export interface BypassWatchdogOptions {
    * поэтому сайты проверяем редко, а конфиги не перебираем — только перезапуск текущего.
    */
   isGameMode?: () => boolean;
+  /**
+   * Проверкам сайтов сейчас нельзя верить: например, весь трафик идёт через чужой VPN.
+   * Тогда следим только за тем, что winws жив, а конфиги не перезапускаем и не меняем.
+   */
+  isProbeUnreliable?: () => boolean;
   /** как часто проверять сайты в игровом режиме */
   gameHealthCheckIntervalMs?: number;
   isStoppedByUser: () => boolean;
@@ -183,8 +188,8 @@ export class BypassWatchdog {
     if (now - this.lastHealthCheckAt < healthInterval) return;
     this.lastHealthCheckAt = now;
 
-    // Нет сети вообще — перезапуск winws не поможет
-    if (!o.isOnline()) {
+    // Нет сети вообще или трафик идёт мимо zapret — перезапуск winws не поможет
+    if (!o.isOnline() || o.isProbeUnreliable?.()) {
       this.healthFailStreak = 0;
       this.setHealth('checking');
       return;
@@ -223,7 +228,7 @@ export class BypassWatchdog {
     const o = this.options;
     if (this.retryAt === null || this.now() < this.retryAt) return;
     if (o.isStoppedByUser() || !o.autoRecoverEnabled()) return;
-    if (!o.isOnline()) {
+    if (!o.isOnline() || o.isProbeUnreliable?.()) {
       this.retryAt = this.now() + 60_000;
       return;
     }

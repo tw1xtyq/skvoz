@@ -17,6 +17,8 @@ export interface DiagnosticReportInput {
   zapret: { path: string | null; running: boolean; strategy: string | null; strategies: number };
   watchdogHealth: string;
   network: string;
+  /** сторонний VPN, через который идёт весь трафик */
+  foreignVpn?: string | null;
   rankings: StrategyRanking[];
   rankedAt: number | null;
   events: BypassEvent[];
@@ -50,6 +52,9 @@ export function buildDiagnosticReport(input: DiagnosticReportInput): string {
   lines.push(`Обход: ${input.zapret.running ? 'работает' : 'выключен'} · конфиг: ${input.zapret.strategy ?? '—'}`);
   lines.push(`Конфигов: ${input.zapret.strategies} · состояние сторожа: ${input.watchdogHealth}`);
   lines.push(`Сеть: ${input.network}`);
+  if (input.foreignVpn) {
+    lines.push(`ВНИМАНИЕ: весь трафик идёт через сторонний VPN «${input.foreignVpn}» — он мешает zapret`);
+  }
   lines.push('');
 
   lines.push('== Настройки ==');

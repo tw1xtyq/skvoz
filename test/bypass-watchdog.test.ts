@@ -394,3 +394,27 @@ test('упавший winws в игре всё равно поднимается 
   await tick();
   assert.deepEqual(state.started, ['a.bat']);
 });
+
+test('при чужом VPN проверки сайтов не перезапускают и не меняют конфиг', async () => {
+  let vpn = true;
+  const { state, tick, watchdog } = createHarness({ isProbeUnreliable: () => vpn });
+  state.working.clear();
+  await tick(6);
+  assert.deepEqual(state.started, []);
+  assert.deepEqual(state.switched, []);
+  assert.deepEqual(state.bad, []);
+  assert.equal(watchdog.currentHealth, 'checking');
+
+  // VPN выключили — сторож снова следит за сайтами
+  vpn = false;
+  state.working.add('a.bat');
+  await tick();
+  assert.equal(watchdog.currentHealth, 'ok');
+});
+
+test('при чужом VPN упавший winws всё равно поднимается', async () => {
+  const { state, tick } = createHarness({ isProbeUnreliable: () => true });
+  state.running = false;
+  await tick();
+  assert.deepEqual(state.started, ['a.bat']);
+});
